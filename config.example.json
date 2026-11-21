@@ -1,0 +1,153 @@
+{
+  "profile": {
+    "firstName": "",
+    "lastName": "",
+    "email": "",
+    "phone": "",
+    "city": "",
+    "region": "",
+    "country": "",
+    "linkedin": "",
+    "github": "",
+    "website": "",
+    "school": "",
+    "degree": "",
+    "graduationYear": "",
+    "currentEmployer": "",
+    "currentTitle": "",
+    "answers": {
+      "authorizedToWork": "",
+      "requiresSponsorship": "",
+      "authorizedToWorkUS": "",
+      "requiresSponsorshipUS": "",
+      "offerDeadline": "",
+      "willingToRelocate": "",
+      "howDidYouHear": "",
+      "gender": "",
+      "race": "",
+      "veteran": "",
+      "disability": "",
+      "salaryExpectation": "",
+      "startDate": "",
+      "pronouns": "",
+      "hispanic": "",
+      "sexualOrientation": "",
+      "lgbtq": "",
+      "transgender": "",
+      "indigenous": "",
+      "visibleMinority": ""
+    },
+    "major": "",
+    "minor": "",
+    "gpa": "",
+    "gpaScale": "4.0",
+    "yearOfStudy": "",
+    "graduationMonth": "",
+    "transcriptFile": "",
+    "pronouns": "",
+    "eduStartMonth": "",
+    "eduStartYear": "",
+    "jobStartMonth": "",
+    "jobStartYear": "",
+    "jobEndMonth": "",
+    "jobEndYear": ""
+  },
+  "search": {
+    "queries": [
+      {
+        "keywords": "software engineer intern",
+        "location": "Remote",
+        "track": "auto"
+      },
+      {
+        "keywords": "finance intern",
+        "location": "Remote",
+        "track": "auto"
+      }
+    ],
+    "postedWithin": "week",
+    "maxJobsPerQuery": 40,
+    "excludeTitleWords": [
+      "senior",
+      "sr.",
+      "staff",
+      "principal",
+      "lead",
+      "manager",
+      "director"
+    ]
+  },
+  "apply": {
+    "autoSubmit": true,
+    "maxApplicationsPerRun": 50,
+    "browser": "background"
+  },
+  "llm": {
+    "host": "http://127.0.0.1:11434",
+    "model": "qwen2.5:3b",
+    "provider": "ollama",
+    "models": {
+      "anthropic": "claude-haiku-5-5",
+      "openai": "gpt-4.1-mini",
+      "gemini": "gemini-2.5-flash"
+    }
+  },
+  "email": {
+    "enabled": true,
+    "dailyCap": 40,
+    "sendWindow": {
+      "startHour": 8,
+      "endHour": 17
+    },
+    "minGapMinutes": 4,
+    "maxGapMinutes": 11,
+    "followUpAfterDays": 5,
+    "maxContactsPerJob": 2,
+    "useGuessedEmails": true,
+    "hunterApiKey": ""
+  },
+  "dashboard": {
+    "port": 4321
+  },
+  "onboarded": false,
+  "mode": {
+    "type": "review",
+    "autoDiscover": false,
+    "discoverEveryHours": 6,
+    "batchSize": 25
+  },
+  "coverLetter": {
+    "variants": 3,
+    "tone": "auto",
+    "mode": "engine",
+    "example": "",
+    "exampleCompany": "",
+    "exampleRole": "",
+    "rewriteOpening": true,
+    "tailorParagraphs": true
+  },
+  "resumes": {
+    "swe": {
+      "useOriginalFile": false,
+      "originalFile": "",
+      "originalName": ""
+    },
+    "finance": {
+      "useOriginalFile": false,
+      "originalFile": "",
+      "originalName": ""
+    }
+  },
+  "sources": {
+    "boards": {
+      "enabled": true,
+      "maxPerRun": 100,
+      "list": [],
+      "locations": [],
+      "includeEntryLevelWithoutKeyword": false
+    },
+    "linkedin": {
+      "enabled": true
+    }
+  }
+}

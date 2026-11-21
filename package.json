@@ -1,0 +1,27 @@
+{
+  "name": "joblin",
+  "version": "1.0.0",
+  "main": "start.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node start.js",
+    "login": "node start.js login",
+    "run": "node start.js run",
+    "dry": "node start.js run --dry",
+    "background": "node start.js --no-window"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "type": "module",
+  "dependencies": {
+    "better-sqlite3": "^12.11.1",
+    "cheerio": "^1.0.0",
+    "express": "^5.3.0",
+    "imapflow": "^2.12.2",
+    "nodemailer": "^10.6.1",
+    "pdf-parse": "^1.1.1",
+    "playwright": "^1.65.1"
+  }
+}

@@ -1,0 +1,16 @@
+Dear Hiring Manager,
+
+[Opening: one or two sentences on what got you into building software. A real story beats a generic line.]
+
+[Your strongest projects or experience: what you built, what it did, and a number if you have one (users, downloads, speed, money saved).]
+
+[School and/or work: what you studied, where you've worked, and what you did there.]
+
+The {{role}} position at {{company}} is particularly compelling because it offers the opportunity to {{role_focus}}. {{company}}'s focus on {{company_focus}} is the kind of problem I want to work on, and I would welcome the chance to learn from experienced engineers and ship meaningful work with the team.
+
+[What you'd bring: one or two sentences on how you work.]
+
+Thank you for your time and consideration. I would welcome the opportunity to discuss how I can contribute to {{company}}.
+
+Sincerely,
+{{name}}

@@ -1,0 +1,16 @@
+Dear Hiring Manager,
+
+[Opening: one or two sentences on why finance. A real story beats a generic line.]
+
+[Your strongest experience: deals, models, case competitions, investing clubs or internships, with numbers where you have them.]
+
+[School and/or work: what you studied, where you've worked, and what you did there.]
+
+The {{role}} position at {{company}} is particularly compelling because it offers the opportunity to {{role_focus}}. {{company}}'s focus on {{company_focus}} is where I want to build my career, and I would welcome the chance to learn from an experienced team and contribute to real decisions.
+
+[What you'd bring: one or two sentences on how you work.]
+
+Thank you for your time and consideration. I would welcome the opportunity to discuss how I can contribute to {{company}}.
+
+Sincerely,
+{{name}}

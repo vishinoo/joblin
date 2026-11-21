@@ -1,0 +1,35 @@
+{
+  "track": "finance",
+  "headline": "Finance student who loves a good model",
+  "education": [
+    {
+      "school": "Your University",
+      "degree": "Your Degree",
+      "location": "City, Region",
+      "date": "Class of 20XX",
+      "bullets": [
+        "Relevant Coursework: ..."
+      ]
+    }
+  ],
+  "sections": [
+    {
+      "title": "Experience",
+      "items": [
+        {
+          "org": "Company Name",
+          "role": "Financial Analyst Intern",
+          "location": "City, Region",
+          "date": "May 20XX \u2013 Aug 20XX",
+          "bullets": [
+            "Replace this with a real accomplishment, with a number if you have one."
+          ]
+        }
+      ]
+    }
+  ],
+  "skills": [
+    "Skill one",
+    "Skill two"
+  ]
+}

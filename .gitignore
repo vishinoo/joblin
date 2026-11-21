@@ -1,0 +1,8 @@
+node_modules/
+data/
+.env
+.DS_Store
+# personal settings and resumes (created from the examples on first run)
+config.json
+resumes/*.json
+templates/cover-*.txt
