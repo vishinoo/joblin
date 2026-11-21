@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Joblin: your free job-hunting goblin</title>
+<meta name="description" content="Joblin finds jobs, writes a tailored resume and cover letter for each one, applies for you, and emails recruiters for coffee chats. Free, and it runs on your own laptop.">
+<meta property="og:title" content="Joblin: your free job-hunting goblin">
+<meta property="og:description" content="Applies to jobs in bulk, tailors every resume and cover letter, and cold-emails recruiters for coffee chats. Free and private, on your own laptop.">
+<meta property="og:image" content="https://vishinoo.github.io/joblin/media/joblin-launch.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="media/joblin-logo-64.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #16171b; --panel: #1f2025; --raised: #2a2c32; --line: #34363d;
+  --ink: #ecebe8; --ink2: #b9bac0; --muted: #8b8d96;
+  --accent: #4c7dff; --soft: rgba(76,125,255,.14); --good: #4cc38a; --warn: #e5a44b;
+  --r: 16px;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 400 17px/1.6 Geist, ui-sans-serif, system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+a { color: var(--accent); }
+img, video { max-width: 100%; display: block; }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 20px; }
+h1, h2, h3 { letter-spacing: -0.03em; line-height: 1.08; margin: 0; }
+h2 { font-size: clamp(32px, 5vw, 48px); margin-bottom: 14px; }
+h3 { font-size: 21px; letter-spacing: -0.015em; margin-bottom: 6px; }
+.lead { color: var(--ink2); font-size: 19px; max-width: 680px; margin: 0 0 34px; }
+.hl { color: var(--accent); }
+section { padding: 84px 0; border-top: 1px solid #23252a; }
+code, .mono { font-family: 'Geist Mono', ui-monospace, monospace; font-size: .92em; }
+code { background: var(--raised); padding: 2px 7px; border-radius: 6px; }
+
+/* nav */
+nav { position: sticky; top: 0; z-index: 10; background: rgba(22,23,27,.85); backdrop-filter: blur(10px); border-bottom: 1px solid #23252a; }
+nav .wrap { display: flex; align-items: center; gap: 22px; height: 62px; }
+.logo { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 20px; color: var(--ink); text-decoration: none; letter-spacing: -0.02em; }
+.logo img { height: 26px; }
+nav .links { margin-left: auto; display: flex; gap: 22px; align-items: center; }
+nav .links a { color: var(--ink2); text-decoration: none; font-size: 15px; }
+nav .links a:hover { color: var(--ink); }
+@media (max-width: 720px) { nav .links a:not(.btn) { display: none; } }
+
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 13px 22px; border-radius: 12px; font-weight: 600; font-size: 16px; text-decoration: none; border: 1px solid var(--line); background: var(--raised); color: var(--ink); cursor: pointer; font-family: inherit; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn.sm { padding: 8px 14px; font-size: 14px; border-radius: 9px; }
+
+/* hero */
+.hero { padding: 64px 0 40px; display: grid; grid-template-columns: 1.1fr .9fr; gap: 40px; align-items: center; }
+.hero h1 { font-size: clamp(44px, 7vw, 76px); }
+.hero p { color: var(--ink2); font-size: 20px; margin: 20px 0 30px; max-width: 520px; }
+.hero .cta { display: flex; gap: 12px; flex-wrap: wrap; }
+.hero .meta { margin-top: 18px; color: var(--muted); font-size: 14px; }
+.hero img { max-height: 470px; margin: 0 auto; }
+@media (max-width: 820px) { .hero { grid-template-columns: 1fr; padding-top: 36px; } .hero img { max-height: 300px; order: -1; } }
+.video { border-radius: 20px; overflow: hidden; border: 1px solid var(--line); box-shadow: 0 30px 80px rgba(0,0,0,.45); margin-bottom: 70px; }
+
+/* features */
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 16px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 24px; }
+.card p { margin: 0; color: var(--ink2); font-size: 15.5px; }
+.card .ic { width: 44px; height: 44px; border-radius: 12px; background: var(--soft); display: grid; place-items: center; font-size: 22px; margin-bottom: 14px; }
+.card .ic img { width: 26px; }
+
+/* steps */
+.req { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 40px; }
+.req span { background: var(--panel); border: 1px solid var(--line); border-radius: 30px; padding: 8px 16px; font-size: 15px; color: var(--ink2); }
+.req b { color: var(--ink); font-weight: 600; }
+.step { display: grid; grid-template-columns: 64px 1fr; gap: 22px; padding: 34px 0; border-bottom: 1px solid #23252a; }
+.step:last-of-type { border-bottom: 0; }
+.num { width: 52px; height: 52px; border-radius: 50%; background: var(--accent); color: #fff; font-weight: 700; font-size: 22px; display: grid; place-items: center; }
+.step h3 { font-size: 26px; margin-bottom: 10px; }
+.step p { margin: 0 0 12px; color: var(--ink2); }
+.step ul { margin: 0 0 12px; padding-left: 20px; color: var(--ink2); }
+.step li { margin: 5px 0; }
+kbd { font-family: inherit; font-size: 14px; font-weight: 600; background: var(--raised); border: 1px solid var(--line); border-bottom-width: 3px; border-radius: 7px; padding: 2px 8px; color: var(--ink); white-space: nowrap; }
+@media (max-width: 600px) { .step { grid-template-columns: 1fr; gap: 12px; } }
+
+/* mock UI */
+.mock { margin-top: 18px; max-width: 700px; }
+.spot { background: rgba(236,235,232,.95); color: #1d1d1f; border-radius: 14px; padding: 14px 18px; display: flex; align-items: center; gap: 12px; font-size: 22px; box-shadow: 0 20px 50px rgba(0,0,0,.4); }
+.spot .q { color: #86868b; }
+.spot .res { margin-left: auto; font-size: 14px; color: #6e6e73; }
+.term { background: #0d0e11; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,.4); }
+.term .bar { height: 32px; background: #1f2025; display: flex; align-items: center; gap: 7px; padding: 0 12px; }
+.term .bar i { width: 12px; height: 12px; border-radius: 50%; background: #ff5f57; } .term .bar i:nth-child(2) { background: #febc2e; } .term .bar i:nth-child(3) { background: #28c840; }
+.term .bar span { margin-left: 8px; font-size: 13px; color: var(--muted); }
+.term pre { margin: 0; padding: 16px 18px; font: 500 14px/1.7 'Geist Mono', ui-monospace, monospace; color: #cfd3dc; white-space: pre-wrap; word-break: break-all; }
+.term .g { color: #7aa2ff; } .term .ok { color: var(--good); } .term .dim { color: var(--muted); }
+.copy { display: flex; align-items: stretch; background: #0d0e11; border: 1px solid var(--accent); border-radius: 12px; overflow: hidden; margin: 14px 0 6px; max-width: 760px; }
+.copy code { flex: 1; min-width: 0; background: none; padding: 16px 18px; font-size: 14.5px; color: #e4ecff; white-space: normal; overflow-wrap: anywhere; border-radius: 0; }
+.copy button { border: 0; border-left: 1px solid var(--line); background: var(--accent); color: #fff; font: 600 15px Geist, sans-serif; padding: 0 22px; cursor: pointer; white-space: nowrap; }
+.copy button.done { background: var(--good); }
+.tip { background: var(--soft); border: 1px solid rgba(76,125,255,.35); border-radius: 12px; padding: 14px 18px; color: var(--ink2); font-size: 15.5px; margin-top: 14px; max-width: 760px; }
+.tip b { color: var(--ink); }
+.warn { background: rgba(229,164,75,.1); border-color: rgba(229,164,75,.35); }
+
+/* data */
+table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; font-size: 15.5px; }
+th, td { text-align: left; padding: 13px 18px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 500; font-size: 14px; background: #1b1c21; }
+tr:last-child td { border-bottom: 0; }
+td:first-child { font-weight: 600; width: 34%; }
+td code { overflow-wrap: anywhere; }
+.step > div, .grid > *, .two > * { min-width: 0; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+@media (max-width: 760px) { .two { grid-template-columns: 1fr; } td:first-child { width: auto; } }
+.list { margin: 10px 0 0; padding: 0; list-style: none; }
+.list li { padding: 10px 0 10px 30px; position: relative; color: var(--ink2); font-size: 15.5px; border-top: 1px solid #2a2c32; }
+.list li:first-child { border-top: 0; }
+.list li::before { position: absolute; left: 2px; top: 9px; }
+.list.yes li::before { content: "✓"; color: var(--good); font-weight: 700; }
+.list.out li::before { content: "↗"; color: var(--warn); font-weight: 700; }
+.list b { color: var(--ink); }
+
+/* faq */
+details { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 4px 20px; margin-bottom: 10px; }
+summary { cursor: pointer; font-weight: 600; padding: 14px 0; list-style: none; display: flex; justify-content: space-between; gap: 12px; }
+summary::after { content: "+"; color: var(--muted); font-size: 22px; line-height: 1; }
+details[open] summary::after { content: "–"; }
+details p, details ol, details ul { color: var(--ink2); margin: 0 0 16px; font-size: 15.5px; }
+
+footer { padding: 70px 0 90px; text-align: center; border-top: 1px solid #23252a; }
+footer img { width: 220px; margin: 0 auto 10px; }
+footer p { color: var(--muted); }
+.side-img { float: right; width: 210px; margin: -10px 0 10px 24px; }
+@media (max-width: 760px) { .side-img { display: none; } }
+</style>
+</head>
+<body>
+
+<nav><div class="wrap">
+  <a class="logo" href="#top"><img src="media/joblin-logo-64.png" alt="">Joblin</a>
+  <div class="links">
+    <a href="#what">What it does</a>
+    <a href="#install">Install</a>
+    <a href="#use">How to use</a>
+    <a href="#data">Your data</a>
+    <a href="#faq">FAQ</a>
+    <a class="btn sm" href="https://github.com/vishinoo/joblin">GitHub ⭐</a>
+  </div>
+</div></nav>
+
+<main id="top">
+<div class="wrap">
+  <div class="hero">
+    <div>
+      <h1>Stop applying.<br><span class="hl">Let the goblin do it.</span></h1>
+      <p>Joblin finds jobs, writes a tailored resume and cover letter for each one, applies for you, and emails recruiters for coffee chats. Free, and it runs on your own laptop.</p>
+      <div class="cta">
+        <a class="btn primary" href="#install">Get Joblin, free</a>
+        <a class="btn" href="#video">Watch the 20-second video</a>
+      </div>
+      <div class="meta">For Mac (Linux works too). No account. No subscription. Open source.</div>
+    </div>
+    <img src="media/joblin.png" alt="Joblin, a blue goblin in a suit, waving">
+  </div>
+
+  <div class="video" id="video">
+    <video src="media/joblin-launch.mp4" poster="media/joblin-launch.jpg" controls playsinline preload="metadata"></video>
+  </div>
+</div>
+
+<section id="what"><div class="wrap">
+  <h2>Your whole job hunt, <span class="hl">on autopilot.</span></h2>
+  <p class="lead">You tell Joblin what jobs you want. He does the boring parts, and you stay in charge of what gets sent.</p>
+  <div class="grid">
+    <div class="card"><div class="ic">📨</div><h3>Applies in bulk</h3><p>Finds openings on about 75 company career sites and LinkedIn, then fills in the applications on Greenhouse, Lever and Ashby for you.</p></div>
+    <div class="card"><div class="ic">📝</div><h3>Tailored for every job</h3><p>Writes a resume and cover letter for each posting using only your real experience. Edit anything before it goes out.</p></div>
+    <div class="card"><div class="ic"><img src="media/gmail.svg" alt=""></div><h3>Coffee-chat emails</h3><p>Finds who's hiring and emails them from your Gmail asking for a quick chat, then follows up if they go quiet.</p></div>
+    <div class="card"><div class="ic"><img src="media/ollama.webp" alt="" style="background:#fff;border-radius:6px;padding:2px"></div><h3>Free and private</h3><p>Runs on your laptop with Ollama, a free AI that never sends your data anywhere. No subscription, ever.</p></div>
+  </div>
+</div></section>
+
+<section id="install"><div class="wrap">
+  <h2>Install Joblin <span class="hl">in 4 steps</span></h2>
+  <p class="lead">No coding needed. Copy one line, paste it, and wait. The setup downloads everything Joblin needs by itself.</p>
+  <div class="req">
+    <span><b>A Mac</b> (Apple chip or Intel)</span>
+    <span><b>8 GB</b> memory or more</span>
+    <span><b>About 5 GB</b> free space</span>
+    <span><b>About 10 minutes</b>, mostly downloading</span>
+  </div>
+
+  <div class="step">
+    <div class="num">1</div>
+    <div>
+      <h3>Open Terminal</h3>
+      <p>Terminal is an app that's already on every Mac. Press <kbd>⌘ Command</kbd> + <kbd>Space</kbd>, type <b>Terminal</b>, and press <kbd>Return</kbd>.</p>
+      <div class="mock"><div class="spot"><span>🔍</span><span>Terminal</span><span class="res">Applications ›</span></div></div>
+      <p style="margin-top:14px">A window with a blinking cursor opens. Don't worry, you only need to paste one thing.</p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="num">2</div>
+    <div>
+      <h3>Copy this line and paste it in</h3>
+      <p>Click <b>Copy</b>, click inside the Terminal window, press <kbd>⌘ Command</kbd> + <kbd>V</kbd> to paste, then press <kbd>Return</kbd>.</p>
+      <div class="copy"><code id="cmd">curl -fsSL https://raw.githubusercontent.com/vishinoo/joblin/main/install.sh | bash</code><button id="copyBtn" type="button">Copy</button></div>
+      <div class="tip"><b>It won't ask for your password.</b> Everything installs into a <code>joblin</code> folder in your home folder, and Ollama goes in Applications.</div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="num">3</div>
+    <div>
+      <h3>Wait while Joblin sets himself up</h3>
+      <p>You'll see four steps go by. You don't need to type anything.</p>
+      <div class="mock term"><div class="bar"><i></i><i></i><i></i><span>Terminal</span></div><pre><span class="g">👺 Hi! I'm Joblin. Setting up takes about 10 minutes, mostly downloading.</span>
+<span class="g">👺 Step 1 of 4: Downloading Node.js (Joblin's engine)…</span>
+<span class="g">👺 Step 2 of 4: Downloading Joblin…</span>
+<span class="g">👺 Step 3 of 4: Downloading Ollama (the free AI brain)…</span>
+<span class="g">👺 Step 4 of 4: Downloading Joblin's brain (qwen2.5:3b, about 2 GB)…</span>
+   <span class="ok">63%</span></pre></div>
+      <ul style="margin-top:16px">
+        <li><b>Ollama pops up</b> partway through. That's expected. If it asks to install a "command line tool", you can skip it.</li>
+        <li><b>The 2 GB download</b> is the AI that writes your letters. It only happens once.</li>
+        <li>If something goes wrong, just paste the line again. It picks up where it left off.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="num">4</div>
+    <div>
+      <img class="side-img" src="media/joblin-working.png" alt="">
+      <h3>Joblin opens. Follow his setup.</h3>
+      <p>Joblin opens in his own window and walks you through:</p>
+      <ul>
+        <li>your name and contact details</li>
+        <li>uploading your resume (PDF or Word)</li>
+        <li>the kinds of jobs you want and where</li>
+        <li>connecting Gmail and LinkedIn (both optional, <a href="#gmail">how-to below</a>)</li>
+        <li>choosing a mode: <b>Review each batch</b> (recommended) or <b>Autopilot</b></li>
+      </ul>
+      <div class="tip"><b>Next time:</b> double-click <b>Joblin</b> on your Desktop. A Terminal window opens alongside Joblin. Keep it open while he works, and close it when you want him to stop.</div>
+    </div>
+  </div>
+  <p style="color:var(--muted);font-size:15px;margin-top:20px">On Linux, the same line works. On Windows, install <a href="https://learn.microsoft.com/windows/wsl/install">WSL</a> first, then use the line inside it.</p>
+</div></section>
+
+<section id="use"><div class="wrap">
+  <h2>How to use Joblin</h2>
+  <p class="lead">Joblin's day goes: find jobs, write applications, wait for your OK, apply, email the recruiters, watch for replies.</p>
+  <div class="grid">
+    <div class="card"><h3>1. Find jobs now</h3><p>Click <b>Find jobs now</b> at the top. Joblin searches, picks the best matches, and writes a resume and cover letter for each.</p></div>
+    <div class="card"><h3>2. Review the batch</h3><p>Open <b>Review batch</b>. Read or edit each letter, then approve the ones you like. Nothing is sent until you approve it.</p></div>
+    <div class="card"><h3>3. He applies</h3><p>Joblin fills in each application in a hidden browser, so you can keep using your Mac. Follow along on <b>Applications</b>.</p></div>
+    <div class="card"><h3>4. Coffee-chat emails</h3><p>On <b>Outreach</b>, see the emails Joblin has queued to recruiters. They go out slowly, during business hours, and you can cancel any of them.</p></div>
+    <div class="card"><h3>5. Answer his questions</h3><p>When an application asks something new, it lands in <b>Questions</b>. Answer it once and Joblin reuses that answer forever.</p></div>
+    <div class="card"><h3>6. Try Autopilot</h3><p>Once you trust his letters, switch to <b>Autopilot</b> in Settings and Joblin finds and applies on a schedule.</p></div>
+  </div>
+
+  <h3 id="gmail" style="margin:46px 0 12px;font-size:26px">Connecting Gmail (2 minutes)</h3>
+  <p style="color:var(--ink2);max-width:760px;margin:0 0 12px">Joblin sends from your own Gmail using an <b>app password</b>: a special code that only lets Joblin send and read mail. It's not your normal password, and you can cancel it any time.</p>
+  <ol style="color:var(--ink2);max-width:760px;padding-left:22px">
+    <li>Turn on <a href="https://myaccount.google.com/signinoptions/twosv">2-Step Verification</a> for your Google account, if it isn't already on.</li>
+    <li>Go to <a href="https://myaccount.google.com/apppasswords">myaccount.google.com/apppasswords</a>, type <b>Joblin</b> as the name, and click <b>Create</b>.</li>
+    <li>Copy the 16-letter code Google shows you.</li>
+    <li>In Joblin, open <b>Settings → Integrations → Gmail</b>, paste your Gmail address and the code, and click <b>Test connection</b>.</li>
+  </ol>
+
+  <h3 style="margin:46px 0 12px;font-size:26px">Updates</h3>
+  <p style="color:var(--ink2);max-width:760px">When there's a new version, an <b>Update available</b> card shows up in the sidebar. Click <b>Update now</b> and Joblin downloads it and restarts. Your settings, resumes and applications are never touched by an update.</p>
+</div></section>
+
+<section id="data"><div class="wrap">
+  <img class="side-img" src="media/joblin-robot.png" alt="" style="width:190px">
+  <h2>Your data <span class="hl">stays on your laptop.</span></h2>
+  <p class="lead">There is no Joblin server and no Joblin account. Nobody, including the person who made Joblin, can see your resume, your applications or your emails.</p>
+
+  <h3 style="margin-bottom:14px">Where everything is kept</h3>
+  <p style="color:var(--ink2);margin:0 0 14px">All of it is in the <code>joblin</code> folder in your home folder (in Finder: <kbd>⌘ Command</kbd> + <kbd>Shift</kbd> + <kbd>H</kbd>).</p>
+  <table>
+    <tr><th>What</th><th>Where</th></tr>
+    <tr><td>Your details and settings</td><td><code>config.json</code></td></tr>
+    <tr><td>Your resumes</td><td><code>resumes/</code></td></tr>
+    <tr><td>Your cover letter templates</td><td><code>templates/</code></td></tr>
+    <tr><td>Applications, emails, saved answers</td><td><code>data/jobert.db</code></td></tr>
+    <tr><td>Every resume and letter it made</td><td><code>data/output/</code> (one folder per job, as PDFs)</td></tr>
+    <tr><td>Gmail app password and AI keys</td><td><code>.env</code> (never shown in the app)</td></tr>
+    <tr><td>Your LinkedIn sign-in</td><td><code>data/browser-profile/</code>, the same way a browser remembers a login</td></tr>
+  </table>
+
+  <div class="two">
+    <div class="card">
+      <h3>What leaves your laptop</h3>
+      <p>Only what's needed for what you asked Joblin to do:</p>
+      <ul class="list out">
+        <li><b>Your applications</b> go to the companies you approved, through their own job sites.</li>
+        <li><b>Your emails</b> go from your Gmail to the recruiters you see on the Outreach page.</li>
+        <li><b>Searches</b> for job listings and for who's hiring (company sites, LinkedIn, public search engines and directories).</li>
+        <li><b>An update check</b> asks GitHub if there's a newer Joblin. Nothing about you is sent.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>What never leaves</h3>
+      <ul class="list yes">
+        <li><b>The AI's work.</b> With Ollama, your resume, letters and emails are written on your laptop.</li>
+        <li><b>Your inbox.</b> Joblin reads your last week of email to spot replies, interview invites and rejections, and sorts them on your laptop.</li>
+        <li><b>Your history.</b> Your applications, answers and notes are only stored in the folder above.</li>
+        <li><b>Usage tracking.</b> There's none. No analytics, no telemetry.</li>
+      </ul>
+    </div>
+  </div>
+  <div class="tip warn"><b>If you switch to Claude, OpenAI or Gemini</b> in Settings → AI model, the job posting, your relevant resume details and the emails Joblin sorts are sent to that company to do the writing. Stay on Ollama to keep everything local.</div>
+
+  <h3 style="margin:40px 0 10px">Deleting everything</h3>
+  <ol style="color:var(--ink2);padding-left:22px;max-width:760px">
+    <li>Close Joblin (close its Terminal window).</li>
+    <li>Drag the <code>joblin</code> folder from your home folder, and the <b>Joblin</b> launcher on your Desktop, to the Trash.</li>
+    <li>To remove the AI too, quit Ollama, then drag <b>Ollama</b> from Applications to the Trash.</li>
+    <li>Cancel the Gmail app password at <a href="https://myaccount.google.com/apppasswords">myaccount.google.com/apppasswords</a>.</li>
+  </ol>
+</div></section>
+
+<section id="faq"><div class="wrap">
+  <h2>Questions</h2>
+  <details><summary>Is it really free?</summary><p>Yes. Joblin is open source under the MIT license, and Ollama's AI runs on your laptop for free. You only pay if you choose to plug in a paid AI like Claude or OpenAI.</p></details>
+  <details><summary>Will it apply to jobs I don't want?</summary><p>Not in <b>Review each batch</b> mode, which is the default: Joblin prepares applications and waits for you to approve each one. Only <b>Autopilot</b> applies on its own, and you have to switch that on.</p></details>
+  <details><summary>Does it make things up on my resume?</summary><p>No. Joblin only uses bullet points from the resume you gave it, and it rejects sentences that invent numbers or skills. You can still read and edit every letter before it's sent.</p></details>
+  <details><summary>Is my laptop fast enough?</summary><p>Most Macs from the last few years with 8 GB of memory are fine. Letters take a little longer on older machines. If yours has 16 GB or more, you can pick a smarter model in Settings → AI model.</p></details>
+  <details><summary>Can I get in trouble with LinkedIn or job sites?</summary><p>Some sites don't allow automated applications, and LinkedIn can limit accounts that act like bots. Joblin goes slowly and acts like a person, but use it sensibly: start in Review mode, keep batches small, and keep the email limit low.</p></details>
+  <details><summary>Something broke. What do I do?</summary><p>Paste the install line again: it repairs and updates Joblin without touching your data. If it's still broken, <a href="https://github.com/vishinoo/joblin/issues">open an issue on GitHub</a> and include what the Terminal window says.</p></details>
+  <details><summary>Does it work on Windows?</summary><p>Not directly yet. Install <a href="https://learn.microsoft.com/windows/wsl/install">WSL</a> (Windows' built-in Linux) and run the install line inside it.</p></details>
+</div></section>
+</main>
+
+<footer><div class="wrap">
+  <img src="media/joblin-rich.png" alt="Joblin in sunglasses with a stack of gold watches">
+  <h2>Let the goblin apply.</h2>
+  <p style="margin:10px 0 26px">Free and open source. If Joblin helps you, a star on GitHub helps other job hunters find him.</p>
+  <a class="btn primary" href="#install">Get Joblin</a>
+  <a class="btn" href="https://github.com/vishinoo/joblin" style="margin-left:8px">Star on GitHub ⭐</a>
+  <p style="margin-top:40px;font-size:14px">MIT License · <a href="https://github.com/vishinoo/joblin">github.com/vishinoo/joblin</a></p>
+</div></footer>
+
+<script>
+document.getElementById('copyBtn').addEventListener('click', async (e) => {
+  const text = document.getElementById('cmd').textContent;
+  try { await navigator.clipboard.writeText(text); }
+  catch { const r = document.createRange(); r.selectNodeContents(document.getElementById('cmd')); const s = getSelection(); s.removeAllRanges(); s.addRange(r); document.execCommand('copy'); }
+  e.target.textContent = 'Copied ✓'; e.target.classList.add('done');
+  setTimeout(() => { e.target.textContent = 'Copy'; e.target.classList.remove('done'); }, 2500);
+});
+</script>
+</body>
+</html>
