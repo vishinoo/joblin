@@ -474,6 +474,12 @@ export async function processJob(job, { dryRun = false } = {}) {
     }
     const res = await submit(page, frame);
     if (res.ok) { await markSubmitted(page, job, docs, ''); return 'submitted'; }
+    // Keep a picture of what the page showed, so you (and Joblin) can see why it didn't confirm.
+    const shot = path.join(path.dirname(docs.resumePath), 'what-happened.png');
+    await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
+    db.prepare('UPDATE applications SET proof_path = ? WHERE job_id = ?').run(shot, job.id);
+    const errText = await frame.locator('[class*="error"]:visible, [role="alert"]:visible, [aria-invalid="true"]').allInnerTexts().catch(() => []);
+    if (errText.filter(Boolean).length) res.reason = `The form said: ${errText.filter(Boolean).slice(0, 3).join('; ')}`;
     handedOff = true;
     handOff(page, job, docs, res.reason);
     return 'needs_review';

@@ -9,7 +9,7 @@ import { googleStatus, startGoogleAuth, disconnectGoogle } from './google.js';
 import { listAnswers, setAnswer, deleteAnswer, pendingCount, listFacts, addFact, updateFact, deleteFacts, deleteAnswers, confirmAnswers, unblockedBy } from './memory.js';
 import { getTemplate } from './cover.js';
 import { DEFAULT_BOARDS } from './sources/boards.js';
-import { chat, history as chatHistory, clearChat } from './chat.js';
+import { chat, history as chatHistory, clearChat, resolveCompany } from './chat.js';
 import { tracks, CATALOG, addTrack, removeTrack, hasOwnResume, trackLabel, templateFileFor } from './tracks.js';
 import { writeCoverLetter, analyzeJob } from './cover.js';
 import { senderAddress } from './mailer.js';
@@ -250,6 +250,18 @@ export function startServer(actions) {
   app.get('/api/chat', (_req, res) => res.json(chatHistory()));
   app.post('/api/chat', async (req, res) => { try { res.json(await chat(req.body.message, actions)); } catch (e) { sendErr(res, e); } });
   app.delete('/api/chat', (_req, res) => { clearChat(); res.json({ ok: true }); });
+
+  // ---------- Target companies ----------
+  app.post('/api/companies', async (req, res) => {
+    const name = String(req.body.name || '').trim();
+    if (!name) return sendErr(res, new Error('Type a company name'));
+    const cos = config.search.companies || [];
+    if (cos.some((c) => c.name.toLowerCase() === name.toLowerCase())) return res.json({ ok: true, board: cos.find((c) => c.name.toLowerCase() === name.toLowerCase()).board });
+    const board = await resolveCompany(name);
+    saveConfig({ search: { companies: [...cos, { name, board: board || '' }] } });
+    addFact(`Wants to apply to ${name}`, 'companies');
+    res.json({ ok: true, board });
+  });
 
   // ---------- Resume types ----------
   app.get('/api/tracks', (_req, res) => res.json({ tracks: tracks().map((t) => ({ id: t.id, label: t.label, base: t.base, own: hasOwnResume(t.id) })), catalog: CATALOG.map((c) => ({ id: c.id, label: c.label })) }));

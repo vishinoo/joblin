@@ -84,7 +84,7 @@ function enhanceSelect(sel) {
   const lab = sel.getAttribute('aria-label') || sel.closest('label')?.childNodes[0]?.textContent?.trim();
   if (lab) btn.setAttribute('aria-label', lab);
   wrap.appendChild(btn);
-  const paint = () => { btn.innerHTML = `<span>${esc(sel.options[sel.selectedIndex]?.text || 'Choose…')}</span>${CHEVRON}`; };
+  const paint = () => { btn.innerHTML = `<span>${esc(sel.options[sel.selectedIndex]?.text || 'Choose…')}</span>${CHEVRON}`; if (sel.classList.contains('status')) btn.dataset.status = sel.value; };
   paint();
   sel.addEventListener('change', paint);
   const choose = (i) => {
@@ -132,6 +132,111 @@ const enhanceAll = (root = document) => $$('select', root).forEach(enhanceSelect
 new MutationObserver((muts) => { for (const m of muts) for (const n of m.addedNodes) if (n.nodeType === 1) (n.tagName === 'SELECT' ? enhanceSelect(n) : enhanceAll(n)); })
   .observe(document.body, { childList: true, subtree: true });
 
+// ---------- Tag input with suggestions (locations, positions, resume types, companies) ----------
+// chipInput(el, { values, suggestions, placeholder, onChange, max })
+function chipInput(el, { values = [], suggestions = [], placeholder = 'Type to add…', onChange = () => {}, single = false } = {}) {
+  let vals = [...values];
+  el.classList.add('chips-in');
+  const draw = () => {
+    el.innerHTML = `${vals.map((v, i) => `<span class="chip on">${esc(v)}<button type="button" data-x="${i}" aria-label="Remove ${esc(v)}">×</button></span>`).join('')}
+      <span class="ci-wrap"><input type="text" class="ci" placeholder="${esc(placeholder)}" autocomplete="off"><div class="dd-menu ci-menu" hidden></div></span>`;
+    const input = $('.ci', el), menu = $('.ci-menu', el);
+    let active = 0, shown = [];
+    const add = (v) => { v = String(v).trim().replace(/,$/, ''); if (!v) return; if (!vals.some((x) => x.toLowerCase() === v.toLowerCase())) { vals = single ? [v] : [...vals, v]; onChange(vals); } draw(); $('.ci', el).focus(); };
+    const show = () => {
+      const q = input.value.trim().toLowerCase();
+      shown = suggestions.filter((s) => !vals.some((v) => v.toLowerCase() === s.toLowerCase()) && (!q || s.toLowerCase().includes(q)))
+        .sort((a, b) => (b.toLowerCase().startsWith(q) - a.toLowerCase().startsWith(q))).slice(0, 8);
+      if (q && !shown.some((s) => s.toLowerCase() === q)) shown.push(input.value.trim());
+      active = 0;
+      menu.innerHTML = shown.map((s, i) => `<div class="dd-opt ${i === 0 ? 'active' : ''}" data-i="${i}">${s === input.value.trim() && !suggestions.includes(s) ? `Add “${esc(s)}”` : esc(s)}</div>`).join('');
+      menu.hidden = !shown.length || document.activeElement !== input;
+      $$('.dd-opt', menu).forEach((o) => o.onmousedown = (e) => { e.preventDefault(); add(shown[+o.dataset.i]); });
+    };
+    input.oninput = show; input.onfocus = show; input.onblur = () => setTimeout(() => (menu.hidden = true), 120);
+    input.onkeydown = (e) => {
+      const opts = $$('.dd-opt', menu);
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); active = Math.max(0, Math.min(opts.length - 1, active + (e.key === 'ArrowDown' ? 1 : -1))); opts.forEach((o, i) => o.classList.toggle('active', i === active)); }
+      else if (e.key === 'Enter' || e.key === ',' || e.key === 'Tab' && input.value) { if (shown[active] || input.value) { e.preventDefault(); add(menu.hidden ? input.value : shown[active] || input.value); } }
+      else if (e.key === 'Backspace' && !input.value && vals.length) { vals = vals.slice(0, -1); onChange(vals); draw(); $('.ci', el).focus(); }
+      else if (e.key === 'Escape') menu.hidden = true;
+    };
+    $$('[data-x]', el).forEach((b) => b.onclick = () => { vals = vals.filter((_, i) => i !== +b.dataset.x); onChange(vals); draw(); });
+  };
+  draw();
+  return () => vals;
+}
+
+const LOCATION_SUGGESTIONS = ['Canada', 'Remote', 'United States', 'Ontario', 'British Columbia', 'Alberta', 'Quebec', 'Manitoba', 'Saskatchewan', 'Nova Scotia', 'New Brunswick', 'Newfoundland and Labrador', 'Prince Edward Island',
+  'Toronto', 'Vancouver', 'Montreal', 'Calgary', 'Edmonton', 'Ottawa', 'Waterloo', 'Kitchener', 'Mississauga', 'Surrey', 'Burnaby', 'Victoria', 'Winnipeg', 'Halifax', 'Quebec City', 'Hamilton', 'London, ON', 'Regina', 'Saskatoon',
+  'New York', 'San Francisco', 'Seattle', 'Boston', 'Chicago', 'Austin', 'Los Angeles', 'Washington DC', 'Denver', 'Atlanta', 'Miami', 'Dallas', 'Houston', 'California', 'Texas', 'Washington', 'Massachusetts', 'Illinois',
+  'United Kingdom', 'London', 'Ireland', 'Dublin', 'Germany', 'Berlin', 'France', 'Paris', 'Netherlands', 'Amsterdam', 'Spain', 'Switzerland', 'Sweden', 'Poland', 'Albania', 'Portugal', 'Italy',
+  'India', 'Bangalore', 'Singapore', 'Hong Kong', 'Japan', 'Tokyo', 'Australia', 'Sydney', 'United Arab Emirates', 'Dubai', 'Mexico', 'Brazil', 'Israel', 'South Africa', 'New Zealand'];
+const POSITION_SUGGESTIONS = ['Software Engineer Intern', 'Software Developer', 'New Grad Software Engineer', 'Backend Engineer', 'Frontend Engineer', 'Full Stack Developer', 'Mobile Developer', 'DevOps Engineer', 'Data Engineer',
+  'Data Analyst', 'Data Scientist', 'Machine Learning Engineer', 'AI Engineer', 'Business Intelligence Analyst', 'Product Manager', 'Associate Product Manager', 'UX Designer', 'Product Designer', 'Cybersecurity Analyst', 'IT Support',
+  'Investment Banking Analyst', 'Investment Banking Summer Analyst', 'Finance Intern', 'Financial Analyst', 'Equity Research', 'Private Equity', 'Venture Capital', 'Corporate Finance', 'FP&A Analyst', 'Capital Markets', 'Wealth Management', 'Asset Management', 'Risk Analyst', 'Credit Analyst', 'Treasury Analyst', 'Quantitative Analyst', 'Trader',
+  'Accounting Intern', 'Staff Accountant', 'Audit Associate', 'Tax Associate', 'Business Analyst', 'Management Consultant', 'Strategy Analyst', 'Operations Analyst', 'Supply Chain Analyst', 'Project Coordinator', 'Project Manager',
+  'Marketing Intern', 'Marketing Coordinator', 'Digital Marketing', 'Social Media Coordinator', 'Content Writer', 'Communications', 'Public Relations', 'Brand Associate', 'Growth Marketing', 'SEO Specialist',
+  'Sales Development Representative', 'Account Executive', 'Business Development', 'Customer Success', 'Account Manager', 'Recruiter', 'HR Coordinator', 'People Operations',
+  'Mechanical Engineer', 'Electrical Engineer', 'Civil Engineer', 'Chemical Engineer', 'Industrial Engineer', 'Manufacturing Engineer', 'Embedded Systems Engineer', 'Hardware Engineer', 'Energy Analyst',
+  'Research Assistant', 'Lab Technician', 'Policy Analyst', 'Legal Assistant', 'Paralegal', 'Healthcare Administration', 'Teacher', 'Graphic Designer', 'Video Editor', 'Architect'];
+
+// ---------- Chat with Joblin ----------
+let chatOpen = false;
+function toggleChat(force) {
+  chatOpen = force ?? !chatOpen;
+  document.body.classList.toggle('chat-open', chatOpen);
+  $('#chat').hidden = !chatOpen;
+  if (chatOpen) { loadChat(); setTimeout(() => $('#chatIn')?.focus(), 50); }
+}
+const CHAT_STARTERS = ['Software engineering internships in Canada', 'Finance and investment banking roles in Toronto', 'Only apply to Wealthsimple, Stripe and Shopify', 'Marketing internships, remote is fine', 'Start a search now'];
+async function loadChat() {
+  const msgs = await api('/chat');
+  const box = $('#chatMsgs');
+  box.innerHTML = (msgs.length ? '' : `<div class="cmsg joblin"><img src="/img/joblin-logo-64.png" alt=""><div>Hi! Tell me what you’re looking for: roles, places, companies. I’ll set up the search and remember your preferences. Say “start” when you want me to go.</div></div>`)
+    + msgs.map((m) => `<div class="cmsg ${m.role}">${m.role === 'joblin' ? '<img src="/img/joblin-logo-64.png" alt="">' : ''}<div>${esc(m.text)}${m.meta?.changes?.length ? `<div class="cchanges">${m.meta.changes.map((c) => `<span>${esc(c)}</span>`).join('')}</div>` : ''}</div></div>`).join('');
+  $('#chatStarters').innerHTML = msgs.length > 2 ? '' : CHAT_STARTERS.map((s) => `<button class="chip" data-s="${esc(s)}">${esc(s)}</button>`).join('');
+  $$('#chatStarters [data-s]').forEach((b) => b.onclick = () => sendChat(b.dataset.s));
+  box.scrollTop = box.scrollHeight;
+}
+async function sendChat(text) {
+  text = String(text ?? $('#chatIn').value).trim(); if (!text) return;
+  $('#chatIn').value = '';
+  const box = $('#chatMsgs');
+  box.insertAdjacentHTML('beforeend', `<div class="cmsg user"><div>${esc(text)}</div></div><div class="cmsg joblin typing"><img src="/img/joblin-logo-64.png" alt=""><div><span class="dots"><i></i><i></i><i></i></span></div></div>`);
+  box.scrollTop = box.scrollHeight;
+  try { const r = await api('/chat', { method: 'POST', body: { message: text } }); if (r.started) refreshSummary(); await loadSettings().catch(() => {}); }
+  catch (e) { toast(e.message, true); }
+  loadChat();
+}
+function mountChat() {
+  const el = document.createElement('aside');
+  el.id = 'chat'; el.hidden = true; el.setAttribute('aria-label', 'Chat with Joblin');
+  el.innerHTML = `<div class="chat-h"><img src="/img/joblin-logo-64.png" alt=""><div><b>Joblin</b><span class="muted">Your job search assistant</span></div>
+      <button class="btn sm ghost" id="chatClear" title="Clear conversation">Clear</button><button class="btn sm ghost" id="chatClose" aria-label="Close chat">✕</button></div>
+    <div class="chat-msgs" id="chatMsgs"></div><div class="chips chat-starters" id="chatStarters"></div>
+    <form class="chat-f" id="chatForm"><textarea id="chatIn" rows="2" placeholder="e.g. Finance internships in Toronto at RBC or Wealthsimple"></textarea><button class="btn primary" type="submit">Send</button></form>`;
+  document.body.appendChild(el);
+  $('#chatClose').onclick = () => toggleChat(false);
+  $('#chatClear').onclick = async () => { await api('/chat', { method: 'DELETE' }); loadChat(); };
+  $('#chatForm').onsubmit = (e) => { e.preventDefault(); sendChat(); };
+  $('#chatIn').onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); } };
+}
+
+// ---------- Progress for both workers ----------
+function workBars() {
+  const W = S.system.workers || {};
+  const bar = (label, p, extra = '') => `<div class="wbar"><div class="wl"><span>${label}</span><span class="muted">${p?.total ? `${p.done} / ${p.total}` : ''}</span></div>
+    <div class="pbar"><i style="width:${p?.total ? Math.round((p.done / p.total) * 100) : 6}%"></i></div>${p?.current ? `<div class="meta">${esc(p.current)}</div>` : extra}</div>`;
+  const out = [];
+  if (W.find?.state) out.push(bar(W.find.detail || 'Finding jobs', W.find.progress, W.find.found ? `<div class="meta">${W.find.found} new jobs found</div>` : ''));
+  if (W.apply?.state) out.push(bar('Applying', W.apply.progress));
+  const q = S.byStatus || {};
+  const queue = [q.approved ? `${q.approved} approved, waiting to send` : '', q.pending_approval ? `${q.pending_approval} ready for your review` : '', S.pendingAnswers ? `${S.pendingAnswers} question${S.pendingAnswers === 1 ? '' : 's'} waiting on you` : ''].filter(Boolean);
+  if (queue.length) out.push(`<div class="queue">${queue.map((x) => `<span class="pill plain">${esc(x)}</span>`).join('')}</div>`);
+  return out.join('');
+}
+
 let S = {}; // summary
 let SET = null; // settings
 const state = { review: { items: [], sel: new Set(), active: null, filter: 'all' }, apps: { q: '', status: '', track: '' }, emailFilter: '', settingsTab: 'integrations' };
@@ -152,8 +257,9 @@ async function refreshSummary() {
     <div class="conn"><span class="dot ${sys.llm ? 'ok' : 'bad'}"></span>${sys.llmProvider === 'ollama' ? 'Local model' : esc(sys.llmModel)} ${sys.llm ? 'ready' : 'not ready'}</div>
     <div class="conn"><span class="dot ${sys.mode.type === 'autopilot' ? 'ok' : ''}"></span>${sys.mode.type === 'autopilot' ? 'Autopilot on' : 'Review mode'}</div>`;
   const w = sys.worker;
-  const pr = w?.progress;
-  $('#worker').innerHTML = w?.state ? `<span class="spin"></span>${esc(w.detail || 'Working')}${pr?.total ? ` · ${pr.done}/${pr.total}` : ''}` : '';
+  const WK = sys.workers || {};
+  const chip = (x, label) => x?.state ? `<span class="wk"><span class="spin"></span>${esc(label || x.detail || 'Working')}${x.progress?.total ? ` ${x.progress.done}/${x.progress.total}` : ''}</span>` : '';
+  $('#worker').innerHTML = chip(WK.find) + chip(WK.apply, 'Applying');
   $('#worker').style.cursor = w?.state ? 'pointer' : '';
   let sf = $('#showForm');
   if (sys.formWaiting && !sf) {
@@ -163,7 +269,7 @@ async function refreshSummary() {
     $('#runBtn').before(sf);
   } else if (!sys.formWaiting && sf) sf.remove();
   $('#worker').onclick = () => w?.state && (location.hash = '#/review');
-  $('#runBtn').disabled = Boolean(w?.state);
+  $('#runBtn').textContent = 'Ask Joblin';
   if (!sys.onboarded && $('#onboarding').hidden) openOnboarding();
 }
 
@@ -175,7 +281,8 @@ async function render() {
   try { await (VIEWS[r] || VIEWS.dashboard)(view); } catch (e) { view.innerHTML = `<div class="panel empty"><b>Couldn't load this page</b>${esc(e.message)}</div>`; }
 }
 window.addEventListener('hashchange', render);
-$('#runBtn').onclick = async () => {
+$('#runBtn').onclick = () => toggleChat();
+const startSearch = async () => {
   const { started } = await api('/run', { method: 'POST', body: {} });
   toast(started ? (S.system.mode.type === 'autopilot' ? 'Joblin is finding and applying to jobs' : 'Joblin is finding jobs — watch progress here') : 'Joblin is already working');
   await refreshSummary(); location.hash = '#/review'; render();
@@ -303,16 +410,12 @@ function bindTasks(root) {
 // ---------- Review batch ----------
 const PHASES = [['boards', 'Checking company job boards'], ['linkedin', 'Searching LinkedIn'], ['prepare', 'Writing resumes and cover letters'], ['apply', 'Applying']];
 function workPanel() {
-  const w = S.system.worker; if (!w?.state) return '';
-  const order = PHASES.map((p) => p[0]); const cur = order.indexOf(w.phase);
-  const show = PHASES.filter(([k]) => k !== 'linkedin' || S.system.linkedin?.connected).filter(([k]) => k !== 'apply' || w.phase === 'apply' || S.system.mode.type === 'autopilot');
+  const W = S.system.workers || {};
+  if (!W.find?.state && !W.apply?.state) return '';
+  const title = W.find?.state && W.apply?.state ? 'Joblin is finding jobs and applying' : W.apply?.state ? 'Joblin is applying' : W.find?.phase === 'prepare' ? 'Joblin is writing your applications' : 'Joblin is looking for jobs';
   return `<section class="panel work" aria-live="polite"><img src="/img/joblin-working.png" alt="Joblin at his desk, working">
-    <div><h2>${w.phase === 'prepare' ? 'Joblin is writing your applications' : w.phase === 'apply' ? 'Joblin is applying' : 'Joblin is looking for jobs'}</h2>
-    <div class="muted">${w.found ? `${w.found} new jobs found so far.` : 'This takes a few minutes. You can keep using your Mac.'}</div>
-    <div class="phases">${show.map(([k, l]) => { const i = order.indexOf(k); const st = i < cur ? 'done' : i === cur ? 'on' : '';
-      const pr = st === 'on' ? w.progress : null;
-      return `<div class="phase ${st}"><span class="ic"></span><span>${l}${pr?.current ? ` <span class="meta">· ${esc(pr.current)}</span>` : ''}</span><span class="meta">${pr?.total ? `${pr.done} of ${pr.total}` : ''}</span>
-        ${pr?.total ? `<div class="pbar"><i style="width:${Math.round((pr.done / pr.total) * 100)}%"></i></div>` : ''}</div>`; }).join('')}</div></div></section>`;
+    <div><h2>${title}</h2><div class="muted">It runs in the background. Keep working; approved jobs are sent as soon as they’re ready.</div>
+    <div class="wbars">${workBars()}</div></div></section>`;
 }
 
 VIEWS.review = async (view) => {
@@ -328,8 +431,8 @@ VIEWS.review = async (view) => {
         <div><span class="dot ${sys.linkedin?.connected ? 'ok' : ''}"></span>LinkedIn ${sys.linkedin?.connected ? 'connected' : '<a class="link" href="#/settings">not connected</a> — optional, finds more jobs'}</div>
         <div><span class="dot ${sys.llm ? 'ok' : 'bad'}"></span>${sys.llm ? 'Writing model ready' : '<a class="link" href="#/settings">Writing model not ready</a>'}</div>
       </div>
-      <button class="btn primary" id="go">Find jobs now</button></div></section>`;
-    $('#go')?.addEventListener('click', () => $('#runBtn').click()); return;
+      <button class="btn primary" id="go">Tell Joblin what to look for</button></div></section>`;
+    $('#go')?.addEventListener('click', () => toggleChat(true)); return;
   }
   R.items.forEach((i) => { if (!R.seen?.has(i.id)) { (R.seen ??= new Set()).add(i.id); if ((i.match_score ?? 0) >= 45 && !i.easy_apply) R.sel.add(i.id); } });
   if (!R.items.find((i) => i.id === R.active)) R.active = R.items[0].id;
@@ -432,7 +535,7 @@ VIEWS.applications = async (view) => {
       <td><div style="display:flex;gap:12px">${mono(r.company)}<div><a class="link" href="${esc(r.apply_url || r.linkedin_url)}" target="_blank" rel="noopener">${esc(r.title)}</a><div class="sub">${esc(r.company)}${r.location ? ` · ${esc(r.location)}` : ''}</div>${r.notes ? `<div class="sub">${esc(r.notes.slice(0, 160))}</div>` : ''}</div></div></td>
       <td>${scoreBadge(r.match_score)}</td><td class="sub">${r.track === 'swe' ? 'Software' : r.track === 'finance' ? 'Finance' : '—'}</td>
       <td><select class="status" data-id="${r.id}" aria-label="Status">${Object.keys(STATUS).filter((k) => !['scheduled', 'sent', 'replied', 'bounced', 'cancelled'].includes(k)).map((k) => `<option value="${k}" ${k === r.status ? 'selected' : ''}>${STATUS[k][0]}</option>`).join('')}</select></td>
-      <td class="sub">${r.resume_path ? `<a class="link" target="_blank" href="${fileUrl(r.resume_path)}">Resume</a> · <a class="link" target="_blank" href="${fileUrl(r.cover_letter_path)}">Letter</a>` : '—'}${r.proof_path ? ` · <a class="link" target="_blank" href="${fileUrl(r.proof_path)}">Confirmation</a>` : ''}
+      <td class="sub">${r.resume_path ? `<a class="link" target="_blank" href="${fileUrl(r.resume_path)}">Resume</a> · <a class="link" target="_blank" href="${fileUrl(r.cover_letter_path)}">Letter</a>` : '—'}${r.proof_path ? ` · <a class="link" target="_blank" href="${fileUrl(r.proof_path, Date.now())}">${r.status === 'submitted' ? 'Confirmation' : 'What happened'}</a>` : ''}
         ${['needs_review', 'failed'].includes(r.status) ? `<div style="margin-top:6px"><button class="btn sm" data-retry="${r.id}">Try again in Chrome</button></div>` : ''}</td>
       <td class="sub">${when(r.updated_at)}</td></tr>`).join('') || `<tr><td colspan="6"><div class="empty"><b>No applications yet</b>Use Find jobs now to start your first batch.</div></td></tr>`;
     $$('[data-retry]').forEach((b) => b.onclick = async () => {
@@ -504,11 +607,11 @@ const SETTINGS = {};
 SETTINGS.integrations = async (el) => {
   const sys = S.system;
   el.innerHTML = `
-  <section class="panel panel-b"><div class="integ"><div class="ico" style="color:#5f9bff">in</div>
+  <section class="panel panel-b"><div class="integ"><div class="ico">${logoTile('/img/brands/linkedin.svg', 'LinkedIn')}</div>
     <div><div class="name">LinkedIn</div><div class="muted" style="font-size:13px">${sys.linkedin?.connected ? `Connected${sys.linkedin.note ? ` as ${esc(sys.linkedin.note)}` : ''}. Joblin searches LinkedIn for jobs and the people who posted them.` : sys.linkedin?.note === 'waiting for sign-in' ? 'Sign in in the LinkedIn window. It closes by itself once you’re in.' : `Optional. Sign in once in a Joblin window — your password never touches Joblin.${sys.linkedin?.note ? ` (${esc(sys.linkedin.note)})` : ''}`}</div></div>
     ${sys.linkedin?.connected ? `<button class="btn danger" id="liOff">Disconnect</button>` : `<button class="btn primary" id="liOn">Connect LinkedIn</button>`}</div></section>
 
-  <section class="panel panel-b"><div class="integ"><div class="ico" style="color:#ea8a7c">M</div>
+  <section class="panel panel-b"><div class="integ"><div class="ico">${logoTile('/img/brands/gmail.svg', 'Gmail')}</div>
     <div><div class="name">Gmail</div><div class="muted" style="font-size:13px">${sys.gmail ? `Connected as ${esc(sys.gmailUser)}. Sends outreach and watches for replies.` : 'Sends outreach from your address and watches your inbox for replies, interviews and rejections.'}</div></div>
     ${sys.google?.connected ? `<button class="btn danger" id="goOff">Disconnect</button>` : sys.gmail ? `<button class="btn danger" id="gmOff">Disconnect</button>` : sys.google?.configured ? `<button class="btn" id="goOn" style="background:#fff;color:#1f1f1f;border-color:#fff"><svg viewBox="0 0 24 24" width="16" height="16" style="stroke:none"><path fill="#4285F4" d="M22.6 12.2c0-.8-.1-1.5-.2-2.2H12v4.2h5.9a5 5 0 0 1-2.2 3.3v2.7h3.6c2.1-1.9 3.3-4.8 3.3-8z"/><path fill="#34A853" d="M12 23c3 0 5.5-1 7.3-2.7l-3.6-2.7c-1 .7-2.2 1.1-3.7 1.1-2.9 0-5.3-1.9-6.2-4.5H2.1v2.8A11 11 0 0 0 12 23z"/><path fill="#FBBC05" d="M5.8 14.2a6.6 6.6 0 0 1 0-4.3V7.1H2.1a11 11 0 0 0 0 9.9z"/><path fill="#EA4335" d="M12 5.4c1.6 0 3.1.6 4.2 1.7l3.2-3.2A11 11 0 0 0 2.1 7.1l3.7 2.8C6.7 7.3 9.1 5.4 12 5.4z"/></svg>Sign in with Google</button>` : ''}</div>
     ${sys.gmail ? '' : `<details style="margin-top:12px"><summary class="muted" style="cursor:pointer;font-size:13px">${sys.google?.configured ? 'Or use an app password instead' : 'Connect with an app password'}</summary><ol class="steps"><li>Turn on 2-Step Verification for your Google account.</li><li>Open <a class="link" href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">App passwords</a>, create one called “Joblin”, and copy the 16 characters.</li><li>Paste it below. Joblin checks it with Google before saving.</li></ol>
@@ -516,7 +619,7 @@ SETTINGS.integrations = async (el) => {
     <label class="f">App password<input type="password" id="gmPass" placeholder="xxxx xxxx xxxx xxxx" autocomplete="off"></label></div>
     <div style="margin-top:12px"><button class="btn primary" id="gmOn">Test and connect</button></div></details>`}</section>
 
-  <section class="panel panel-b"><div class="integ"><div class="ico">AI</div>
+  <section class="panel panel-b"><div class="integ"><div class="ico">${logoTile(PROVIDER_ICONS[sys.llmProvider || 'ollama']?.img || '/img/ai/ollama.webp', 'AI model')}</div>
     <div><div class="name">Local model</div><div class="muted" style="font-size:13px">${sys.llmProvider === 'ollama' ? (sys.llm ? `Running ${esc(SET.llm.model)} in Ollama on this Mac. Free.` : 'Ollama isn’t responding. Start it with: brew services start ollama') : `Using ${esc(sys.llmModel)} with your API key.`} <a class="link" href="#" id="toAi">Change model</a></div></div>
     <span class="pill ${sys.llm ? 'good' : 'bad'}">${sys.llm ? 'Ready' : 'Not ready'}</span></div></section>
 
@@ -545,84 +648,6 @@ SETTINGS.integrations = async (el) => {
   function poll() { let n = 0; const t = setInterval(async () => { await refreshSummary(); if (S.system.linkedin?.connected || ++n > 120) { clearInterval(t); if (route() === 'settings') render(); } }, 3000); }
 };
 
-SETTINGS.automation = async (el) => {
-  const m = SET.mode, a = SET.apply;
-  el.innerHTML = `
-  <section class="panel panel-b">
-    <div class="panel-h" style="padding:0 0 14px"><h2>How Joblin applies</h2></div>
-    <div class="choice" id="modeChoice">
-      <button data-m="review" class="${m.type === 'review' ? 'on' : ''}"><b>Review each batch</b><span>Joblin finds jobs and prepares every application, then waits for you to approve the batch.</span></button>
-      <button data-m="autopilot" class="${m.type === 'autopilot' ? 'on' : ''}"><b>Autopilot</b><span>Joblin finds, prepares and submits on its own schedule. You check in on the dashboard.</span></button>
-    </div>
-  </section>
-  <section class="panel panel-b">
-    <div class="srow"><div class="l"><b>Find jobs automatically</b><span>Search on a schedule while Joblin is open. Always on in autopilot.</span></div><div class="ctl">${sw('autoDiscover', m.autoDiscover || m.type === 'autopilot')}</div></div>
-    <div class="srow"><div class="l"><b>Search every</b><span>Hours between runs.</span></div><div class="ctl"><input type="number" id="every" min="1" max="48" value="${m.discoverEveryHours}" style="width:90px"></div></div>
-    <div class="srow"><div class="l"><b>Batch size</b><span>Applications prepared per run.</span></div><div class="ctl"><input type="number" id="batch" min="1" max="200" value="${m.batchSize}" style="width:90px"></div></div>
-    <div class="srow"><div class="l"><b>Autopilot minimum fit</b><span>In autopilot, skip jobs scoring below this (0–100).</span></div><div class="ctl"><input type="number" id="minScore" min="0" max="100" value="${m.minScore ?? 0}" style="width:90px"></div></div>
-  </section>
-  <section class="panel panel-b">
-    <div class="srow"><div class="l"><b>While Joblin works</b><span>Hidden runs a real Chrome window that you never see and that never takes your keyboard or mouse. Visible shows the window so you can watch it work.</span></div>
-      <div class="ctl"><div class="seg" id="browserSeg"><button data-b="background" class="${a.browser !== 'window' ? 'on' : ''}">Hidden</button><button data-b="window" class="${a.browser === 'window' ? 'on' : ''}">Visible</button></div></div></div>
-    <div class="srow"><div class="l"><b>Submit applications</b><span>Off means Joblin fills each form but leaves it unsent, for testing.</span></div><div class="ctl">${sw('autoSubmit', a.autoSubmit)}</div></div>
-    <div class="srow"><div class="l"><b>Applications per run</b><span>Upper limit on submissions in one sitting.</span></div><div class="ctl"><input type="number" id="maxApps" min="1" max="300" value="${a.maxApplicationsPerRun}" style="width:90px"></div></div>
-  </section>
-  <div><button class="btn primary" id="saveAuto">Save automation settings</button></div>`;
-  let mode = m.type, browser = a.browser;
-  $$('#modeChoice button').forEach((b) => b.onclick = () => { mode = b.dataset.m; $$('#modeChoice button').forEach((x) => x.classList.toggle('on', x === b)); });
-  $$('#browserSeg button').forEach((b) => b.onclick = () => { browser = b.dataset.b; $$('#browserSeg button').forEach((x) => x.classList.toggle('on', x === b)); });
-  $('#saveAuto').onclick = async () => {
-    if (mode === 'autopilot' && m.type !== 'autopilot' && !(await ask({ title: 'Turn on autopilot?', body: 'Joblin will find jobs and submit applications on its own schedule, without asking you first.', ok: 'Turn on autopilot' }))) return;
-    saveSettings({ mode: { type: mode, autoDiscover: $('#autoDiscover').checked, discoverEveryHours: +$('#every').value, batchSize: +$('#batch').value, minScore: +$('#minScore').value },
-      apply: { browser, window: browser === 'window' ? 'visible' : 'hidden', autoSubmit: $('#autoSubmit').checked, maxApplicationsPerRun: +$('#maxApps').value } }, 'Automation settings saved');
-  };
-};
-
-function positionsEditor(el, suggested, { onboarding = false } = {}) {
-  const qs = structuredClone(SET.search.queries);
-  const draw = () => {
-    const has = (t) => qs.some((q) => q.keywords.toLowerCase() === t.toLowerCase());
-    el.innerHTML = `
-    ${['swe', 'finance'].map((tr) => `<div><div style="font-size:13px;color:var(--ink-2);margin-bottom:8px">${tr === 'swe' ? 'Software roles' : 'Finance roles'}</div>
-      <div class="chips">${suggested[tr].map((t) => `<button class="chip ${has(t) ? 'on' : ''}" data-add="${esc(t)}" data-track="${tr}">${esc(t)}</button>`).join('')}</div></div>`).join('')}
-    <div><div style="font-size:13px;color:var(--ink-2);margin:6px 0 8px">Searches Joblin will run (${qs.length})</div>
-      <div style="display:grid;gap:8px">${qs.map((q, i) => `<div class="qrow">
-        <input type="text" data-k="${i}" value="${esc(q.keywords)}" aria-label="Role">
-        <input type="text" data-l="${i}" value="${esc(q.location)}" aria-label="Location">
-        <select data-tr="${i}" aria-label="Resume"><option value="auto" ${q.track === 'auto' ? 'selected' : ''}>Auto resume</option><option value="swe" ${q.track === 'swe' ? 'selected' : ''}>Software</option><option value="finance" ${q.track === 'finance' ? 'selected' : ''}>Finance</option></select>
-        <button class="btn sm ghost" data-rm="${i}" aria-label="Remove">Remove</button></div>`).join('')}</div>
-      <button class="btn sm" id="addQ" style="margin-top:10px">Add a search</button></div>`;
-    $$('[data-add]', el).forEach((b) => b.onclick = () => {
-      const t = b.dataset.add, i = qs.findIndex((q) => q.keywords.toLowerCase() === t.toLowerCase());
-      if (i >= 0) qs.splice(i, 1); else qs.push({ keywords: t, location: qs[0]?.location || 'Canada', track: b.dataset.track });
-      draw();
-    });
-    $$('[data-k]', el).forEach((i) => i.oninput = () => (qs[+i.dataset.k].keywords = i.value));
-    $$('[data-l]', el).forEach((i) => i.oninput = () => (qs[+i.dataset.l].location = i.value));
-    $$('[data-tr]', el).forEach((i) => i.onchange = () => (qs[+i.dataset.tr].track = i.value));
-    $$('[data-rm]', el).forEach((b) => b.onclick = () => { qs.splice(+b.dataset.rm, 1); draw(); });
-    $('#addQ', el).onclick = () => { qs.push({ keywords: '', location: qs[0]?.location || 'Canada', track: 'auto' }); draw(); };
-  };
-  draw();
-  return () => qs.filter((q) => q.keywords.trim());
-}
-
-SETTINGS.positions = async (el, suggested) => {
-  el.innerHTML = `<section class="panel panel-b"><div class="panel-h" style="padding:0 0 4px"><h2>Positions you’re applying for</h2></div>
-    <p class="muted" style="margin:0 0 14px;font-size:13px">Tap a role to add or remove it. Each search runs on LinkedIn with the location you set.</p><div id="pe" style="display:grid;gap:16px"></div></section>
-    <section class="panel panel-b"><label class="f">Skip titles containing (comma separated)<input type="text" id="excl" value="${esc(SET.search.excludeTitleWords.join(', '))}"></label>
-    <div class="grid2" style="margin-top:12px"><label class="f">Posted within<select id="posted">${['day', 'week', 'month'].map((p) => `<option value="${p}" ${SET.search.postedWithin === p ? 'selected' : ''}>Past ${p}</option>`).join('')}</select></label>
-    <label class="f">Jobs per search<input type="number" id="perQ" min="5" max="200" value="${SET.search.maxJobsPerQuery}"></label></div></section>
-    <div><button class="btn primary" id="saveQ">Save positions</button></div>`;
-  const get = positionsEditor($('#pe'), suggested);
-  $('#saveQ').onclick = () => saveSettings({ search: { queries: get(), excludeTitleWords: $('#excl').value.split(',').map((s) => s.trim()).filter(Boolean), postedWithin: $('#posted').value, maxJobsPerQuery: +$('#perQ').value } }, 'Positions saved');
-};
-
-function resumeCard(track) {
-  return `<section class="panel panel-b" id="rc-${track}"><div class="panel-h" style="padding:0 0 12px"><h2>${track === 'swe' ? 'Software resume' : 'Finance resume'}</h2><div class="right" id="rcq-${track}"></div></div>
-    <div class="drop" data-drop="${track}" tabindex="0" role="button">Drop a PDF or Word file here, or click to choose<input type="file" accept=".pdf,.docx,.doc" hidden></div>
-    <div id="rcb-${track}"></div></section>`;
-}
 function resumeEditor(track, resume) {
   const sec = (title, items, key) => `<details class="rsec"><summary>${esc(title)} <span class="muted" style="font-weight:400">${items.length} entries</span></summary>
     ${items.map((it, i) => `<div class="ritem2"><div class="grid2"><input type="text" data-p="${key}.${i}.org" value="${esc(it.org ?? it.school)}" aria-label="Organization"><input type="text" data-p="${key}.${i}.role" value="${esc(it.role ?? it.degree)}" aria-label="Role"></div>
@@ -685,11 +710,6 @@ async function mountResume(track, { onboarding = false } = {}) {
   drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove('over'); e.dataTransfer.files[0] && upload(e.dataTransfer.files[0]); };
   showCurrent();
 }
-SETTINGS.resumes = async (el) => {
-  el.innerHTML = `<p class="muted" style="margin:0;font-size:13px">Joblin picks the right resume for each job, reorders your bullet points to match the posting, and never adds experience you don’t have.</p>${resumeCard('swe')}${resumeCard('finance')}`;
-  await Promise.all([mountResume('swe'), mountResume('finance')]);
-};
-
 const EEO = {
   gender: ['Male', 'Female', 'Non-binary', 'Decline to self-identify'],
   pronouns: ['He/him', 'She/her', 'They/them', 'Prefer not to say'],
@@ -761,13 +781,14 @@ SETTINGS.email = async (el) => {
   const E = SET.email;
   el.innerHTML = `<section class="panel panel-b">
     <div class="srow"><div class="l"><b>Send outreach emails</b><span>Email the recruiters and hiring managers on each job after you apply.</span></div><div class="ctl">${sw('emOn', E.enabled)}</div></div>
-    <div class="srow"><div class="l"><b>Daily limit</b><span>Gmail flags accounts that send too much cold email. 30–50 a day is a safe range.</span></div><div class="ctl"><input type="number" id="cap" min="1" max="150" value="${E.dailyCap}" style="width:90px"></div></div>
+    <div class="srow"><div class="l"><b>Daily limit</b><span>Up to 60. Gmail flags accounts that send too much cold email; 30–50 a day is safe.</span></div><div class="ctl"><input type="number" id="cap" min="1" max="60" value="${Math.min(60, E.dailyCap)}" style="width:90px"></div></div>
     <div class="srow"><div class="l"><b>Sending hours</b><span>Weekdays only, in your local time.</span></div><div class="ctl" style="display:flex;gap:6px;align-items:center"><input type="number" id="h1" min="0" max="23" value="${E.sendWindow.startHour}" style="width:70px"> to <input type="number" id="h2" min="1" max="24" value="${E.sendWindow.endHour}" style="width:70px"></div></div>
-    <div class="srow"><div class="l"><b>Follow up after</b><span>One polite follow-up if nobody replies. Cancelled automatically when they do.</span></div><div class="ctl" style="display:flex;gap:6px;align-items:center"><input type="number" id="fu" min="1" max="30" value="${E.followUpAfterDays}" style="width:70px"> days</div></div>
+    <div class="srow"><div class="l"><b>Follow up after</b><span>One polite follow-up if nobody replies. Cancelled automatically when they do.</span></div><div class="ctl" style="display:flex;gap:6px;align-items:center"><input type="number" id="fu" min="1" max="10" value="${Math.min(10, E.followUpAfterDays)}" style="width:70px"> days</div></div>
     <div class="srow"><div class="l"><b>People per job</b><span>Maximum contacts emailed for one posting.</span></div><div class="ctl"><input type="number" id="per" min="1" max="5" value="${E.maxContactsPerJob}" style="width:70px"></div></div>
     <div class="srow"><div class="l"><b>Email guessed addresses</b><span>When no address is public, try first.last@company. Some will bounce.</span></div><div class="ctl">${sw('guess', E.useGuessedEmails)}</div></div>
   </section><div><button class="btn primary" id="saveE">Save email settings</button></div>`;
-  $('#saveE').onclick = () => saveSettings({ email: { enabled: $('#emOn').checked, dailyCap: +$('#cap').value, sendWindow: { startHour: +$('#h1').value, endHour: +$('#h2').value }, followUpAfterDays: +$('#fu').value, maxContactsPerJob: +$('#per').value, useGuessedEmails: $('#guess').checked } }, 'Email settings saved');
+  const cl = (v, lo, hi, d) => Math.max(lo, Math.min(hi, Number(v) || d));
+  $('#saveE').onclick = () => saveSettings({ email: { enabled: $('#emOn').checked, dailyCap: cl($('#cap').value, 1, 60, 40), sendWindow: { startHour: cl($('#h1').value, 0, 23, 8), endHour: cl($('#h2').value, 1, 24, 17) }, followUpAfterDays: cl($('#fu').value, 1, 10, 5), maxContactsPerJob: cl($('#per').value, 1, 3, 2), minGapMinutes: 2, maxGapMinutes: 6, useGuessedEmails: $('#guess').checked } }, 'Email settings saved');
 };
 
 // ---------- Onboarding ----------
@@ -784,7 +805,7 @@ async function openOnboarding() {
       b.innerHTML = `<h2>Let’s set up Joblin</h2><p class="lead">Joblin finds jobs, writes a tailored resume and cover letter for each, applies, and follows up with the people hiring. First, the details that go on every application.</p>
         <div class="grid2">${[['firstName', 'First name'], ['lastName', 'Last name'], ['email', 'Email'], ['phone', 'Phone'], ['city', 'City'], ['region', 'Province or state'], ['linkedin', 'LinkedIn URL'], ['school', 'School'], ['major', 'Major'], ['minor', 'Minor (optional)'], ['gpa', 'GPA (optional)'], ['graduationYear', 'Graduation year']].map(([k, l]) => `<label class="f">${l}<input type="text" data-ob="${k}" value="${esc(p[k])}"></label>`).join('')}</div>`;
     } else if (step === 1) {
-      b.innerHTML = `<h2>Your resumes</h2><p class="lead">Upload your software and finance resumes. Joblin reads them, shows you what it found, and uses the best one for each job. Skip this to keep the versions already loaded.</p>${resumeCard('swe')}${resumeCard('finance')}`;
+      b.innerHTML = `<h2>Your resumes</h2><p class="lead">Upload your software and finance resumes. Joblin reads them, shows you what it found, and uses the best one for each job. Skip this to keep the versions already loaded.</p>${resumeCard('swe', 'Software engineering resume')}${resumeCard('finance', 'Finance resume')}`;
       await Promise.all([mountResume('swe', { onboarding: true }), mountResume('finance', { onboarding: true })]);
     } else if (step === 2) {
       b.innerHTML = `<h2>Which positions are you applying for?</h2><p class="lead">Pick every role you want Joblin to search for. You can change these any time in Settings.</p><div id="obpe" style="display:grid;gap:16px"></div>
@@ -813,7 +834,7 @@ async function openOnboarding() {
       if (step === STEPS.length - 1) {
         await api('/settings', { method: 'PUT', body: { onboarded: true, mode: { type: mode, autoDiscover: mode === 'autopilot' } } });
         ob.hidden = true; await refreshSummary(); location.hash = '#/review';
-        if (await ask({ title: 'You’re all set', image: '/img/joblin-256.png', body: 'Want Joblin to find your first batch of jobs now?', ok: 'Find jobs now', cancel: 'Later' })) $('#runBtn').click();
+        if (await ask({ title: 'You’re all set', image: '/img/joblin-256.png', body: 'Want Joblin to find your first batch of jobs now?', ok: 'Find jobs now', cancel: 'Later' })) startSearch();
         return;
       }
       step++; await loadSettings(); draw();
@@ -822,20 +843,13 @@ async function openOnboarding() {
   draw();
 }
 
-// ---------- AI model ----------
-const PROVIDER_ICONS = {
-  ollama: { bg: '#2b2d33', svg: '<svg viewBox="0 0 24 24" fill="none" stroke="#ecebe8" stroke-width="1.6"><path d="M8 3.5v4M16 3.5v4"/><path d="M6 11.5a6 6 0 0 1 12 0V17a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4z"/><circle cx="9.6" cy="12.5" r=".9" fill="#ecebe8"/><circle cx="14.4" cy="12.5" r=".9" fill="#ecebe8"/><path d="M10.5 16.2c.9.6 2.1.6 3 0"/></svg>' },
-  anthropic: { bg: '#3a2a22', svg: '<svg viewBox="0 0 24 24" fill="#e8916a"><path d="M12 2.5l1.3 6.2 5.1-3.8-3.8 5.1 6.2 1.3-6.2 1.3 3.8 5.1-5.1-3.8L12 21.5l-1.3-6.2-5.1 3.8 3.8-5.1L3.2 12.7l6.2-1.3-3.8-5.1 5.1 3.8z"/></svg>' },
-  openai: { bg: '#20302b', svg: '<svg viewBox="0 0 24 24" fill="none" stroke="#7fd3b2" stroke-width="1.6"><path d="M12 3.2l7.6 4.4v8.8L12 20.8l-7.6-4.4V7.6z"/><path d="M12 7.6l3.8 2.2v4.4L12 16.4l-3.8-2.2V9.8z"/><path d="M12 3.2v4.4M19.6 7.6l-3.8 2.2M19.6 16.4l-3.8-2.2M12 20.8v-4.4M4.4 16.4l3.8-2.2M4.4 7.6l3.8 2.2"/></svg>' },
-  gemini: { bg: '#1f2a44', svg: '<svg viewBox="0 0 24 24"><defs><linearGradient id="gm" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7aa8ff"/><stop offset="1" stop-color="#b48cff"/></linearGradient></defs><path fill="url(#gm)" d="M12 2c.6 5.3 4.7 9.4 10 10-5.3.6-9.4 4.7-10 10-.6-5.3-4.7-9.4-10-10C7.3 11.4 11.4 7.3 12 2z"/></svg>' },
-};
 SETTINGS.ai = async (el) => {
   const L = SET.llm, provs = L.providers;
   let prov = L.provider || 'ollama';
   const draw = () => {
     el.innerHTML = `<section class="panel panel-b"><div class="panel-h" style="padding:0 0 6px"><h2>Writing model</h2></div>
       <p class="muted" style="margin:0 0 14px;font-size:13px">Joblin uses this model for cover letters, emails and application questions. The local model is free. Cloud models write noticeably better and cost a fraction of a cent per application on your own key.</p>
-      <div class="choice" id="provs" style="grid-template-columns:repeat(2,1fr)">${Object.entries(provs).map(([k, v]) => `<button data-p="${k}" class="${prov === k ? 'on' : ''}"><span class="pico" style="background:${PROVIDER_ICONS[k]?.bg}">${PROVIDER_ICONS[k]?.svg || ''}</span><b>${esc(v.label)}</b><span>${k === 'ollama' ? 'Runs on this Mac. No account, no cost.' : L.keys[k] ? `Key saved (${esc(L.keys[k])})` : 'Needs an API key'}</span></button>`).join('')}</div>
+      <div class="choice" id="provs" style="grid-template-columns:repeat(2,1fr)">${Object.entries(provs).map(([k, v]) => `<button data-p="${k}" class="${prov === k ? 'on' : ''}"><span class="pico">${logoTile(PROVIDER_ICONS[k]?.img, v.label)}</span><b>${esc(v.label)}</b><span>${k === 'ollama' ? 'Runs on this Mac. No account, no cost.' : L.keys[k] ? `Key saved (${esc(L.keys[k])})` : 'Needs an API key'}</span></button>`).join('')}</div>
       <div class="grid2" style="margin-top:16px">
         <label class="f">Model<input type="text" id="model" value="${esc(prov === 'ollama' ? L.model : (L.models?.[prov] || provs[prov].defaultModel))}"></label>
         ${prov === 'ollama' ? '<div></div>' : `<label class="f">API key<input type="password" id="key" placeholder="${L.keys[prov] ? esc(L.keys[prov]) + ' saved — paste to replace' : 'Paste your key'}" autocomplete="off"></label>`}
@@ -856,67 +870,6 @@ SETTINGS.ai = async (el) => {
     $('#rmKey')?.addEventListener('click', async () => { await api(`/llm/keys/${prov}`, { method: 'DELETE' }); await loadSettings(); toast('Key removed'); SETTINGS.ai(el); });
   };
   draw();
-};
-
-// ---------- Job sources ----------
-SETTINGS.sources = async (el) => {
-  const B = SET.sources.boards, Li = SET.sources.linkedin;
-  const list = (B.list?.length ? B.list : B.defaults);
-  el.innerHTML = `<section class="panel panel-b">
-    <div class="srow"><div class="l"><b>Company job boards</b><span>Reads open roles straight from companies’ Greenhouse, Lever and Ashby pages. No login, and Joblin can submit every one of these itself.</span></div><div class="ctl">${sw('bOn', B.enabled !== false)}</div></div>
-    <div class="srow"><div class="l"><b>LinkedIn</b><span>Searches LinkedIn with your positions. Needs LinkedIn connected.</span></div><div class="ctl">${sw('lOn', Li.enabled !== false)}</div></div>
-    <div class="srow"><div class="l"><b>New jobs per run</b><span>From company boards.</span></div><div class="ctl"><input type="number" id="bMax" min="5" max="500" value="${B.maxPerRun}" style="width:90px"></div></div>
-  </section>
-  <section class="panel panel-b"><label class="f">Locations to keep (comma separated — “Remote” only counts when it isn’t tied to another country)<input type="text" id="bLoc" value="${esc(B.locations.join(', '))}"></label>
-    <div class="srow" style="margin-top:6px"><div class="l"><b>Include roles without “intern” or “new grad” in the title</b><span>Off keeps it to internships, co-ops and early-career roles.</span></div><div class="ctl">${sw('bEntry', B.includeEntryLevelWithoutKeyword)}</div></div></section>
-  <section class="panel panel-b"><label class="f">Companies (${list.length}) — one per line as ats:company, e.g. greenhouse:stripe, lever:palantir, ashby:wealthsimple. Find the name in the company’s careers page URL.
-    <textarea id="bList" rows="12" style="font-size:13px">${esc(list.join('\n'))}</textarea></label>
-    <button class="btn sm ghost" id="bReset" style="margin-top:8px">Reset to the default list</button></section>
-  <div><button class="btn primary" id="saveSrc">Save job sources</button></div>`;
-  $('#bReset').onclick = () => ($('#bList').value = B.defaults.join('\n'));
-  $('#saveSrc').onclick = () => {
-    const l = $('#bList').value.split('\n').map((x) => x.trim().toLowerCase()).filter((x) => /^(greenhouse|lever|ashby):[\w.-]+$/.test(x));
-    saveSettings({ sources: { boards: { enabled: $('#bOn').checked, maxPerRun: +$('#bMax').value, locations: $('#bLoc').value.split(',').map((x) => x.trim()).filter(Boolean),
-      includeEntryLevelWithoutKeyword: $('#bEntry').checked, list: l.join() === B.defaults.join() ? [] : l }, linkedin: { enabled: $('#lOn').checked } } }, 'Job sources saved');
-  };
-};
-
-// ---------- Cover letter ----------
-SETTINGS.cover = async (el) => {
-  const C = SET.coverLetter;
-  el.innerHTML = `
-  <section class="panel panel-b"><div class="panel-h" style="padding:0 0 6px"><h2>How cover letters are written</h2></div>
-    <p class="muted" style="margin:0 0 6px;font-size:13px;max-width:72ch">Most jobs get your template with the company, role and what they do filled in. That costs one small model call. For jobs that fit you best, Joblin writes a <b>precise</b> letter: it keeps your voice and structure, rewrites the “why this role” paragraph from the posting, and adds a paragraph matching their requirements to your experience.</p>
-    <div class="srow"><div class="l"><b>Write precise letters for jobs with fit of at least</b><span>0–100. You can also ask for one on any job from Review batch.</span></div><div class="ctl"><input type="number" id="pmin" min="0" max="100" value="${C.preciseMinScore ?? 75}" style="width:80px"></div></div>
-    <div class="srow"><div class="l"><b>Always write precise letters</b><span>Best letters, more model calls per job. Free on the local model, just slower.</span></div><div class="ctl">${sw('palways', C.alwaysPrecise)}</div></div>
-  </section>
-  ${['finance', 'swe'].map((t) => `<section class="panel panel-b"><div class="panel-h" style="padding:0 0 10px"><h2>${t === 'swe' ? 'Software template' : 'Finance template'}</h2>
-      <div class="right"><button class="btn sm ghost" data-reset="${t}">Reset to the default</button></div></div>
-    <textarea data-tpl="${t}" rows="18" style="font-size:13.5px">${esc(C.activeTemplates[t])}</textarea>
-    <p class="muted" style="font-size:12.5px;margin:8px 0 0">Placeholders: {{company}}, {{role}}, {{company_focus}} (what the company does, e.g. “helping Canadians invest”), {{role_focus}} (what the role does, e.g. “support deal teams on M&amp;A transactions”), {{name}}.</p></section>`).join('')}
-  <section class="panel panel-b"><div class="panel-h" style="padding:0 0 12px"><h2>Try it</h2>
-      <div class="right"><div class="seg" id="pvTrack"><button data-t="finance" class="on">Finance sample</button><button data-t="swe">Software sample</button></div>
-      <div class="seg" id="pvKind"><button data-k="template" class="on">Template</button><button data-k="precise">Precise</button></div></div></div>
-    <button class="btn" id="pvGo">Save and write a sample letter</button><div id="pvOut" style="margin-top:14px"></div></section>
-  <div><button class="btn primary" id="saveCl">Save cover letter settings</button></div>`;
-  $$('[data-reset]', el).forEach((b) => b.onclick = () => ($(`[data-tpl="${b.dataset.reset}"]`).value = C.defaultTemplates[b.dataset.reset]));
-  let pvt = 'finance', pvk = 'template';
-  $$('#pvTrack button').forEach((b) => b.onclick = () => { pvt = b.dataset.t; $$('#pvTrack button').forEach((x) => x.classList.toggle('on', x === b)); });
-  $$('#pvKind button').forEach((b) => b.onclick = () => { pvk = b.dataset.k; $$('#pvKind button').forEach((x) => x.classList.toggle('on', x === b)); });
-  const patch = () => {
-    const templates = {}; $$('[data-tpl]', el).forEach((t) => { const v = t.value.trim(); templates[t.dataset.tpl] = v === C.defaultTemplates[t.dataset.tpl].trim() ? '' : v; });
-    return { coverLetter: { preciseMinScore: +$('#pmin').value, alwaysPrecise: $('#palways').checked, templates } };
-  };
-  $('#saveCl').onclick = () => saveSettings(patch(), 'Cover letter settings saved');
-  $('#pvGo').onclick = async (ev) => {
-    ev.target.disabled = true;
-    $('#pvOut').innerHTML = `<div class="work" style="grid-template-columns:120px 1fr;padding:6px 0"><img src="/img/joblin-working.png" alt="" style="width:120px"><div><b>Joblin is writing a ${pvk} letter…</b><div class="muted">${pvk === 'precise' ? 'About a minute' : 'About 15 seconds'} on the local model.</div></div></div>`;
-    try {
-      await api('/settings', { method: 'PUT', body: patch() }); await loadSettings();
-      const r = await api('/cover/preview', { method: 'POST', body: { track: pvt, precise: pvk === 'precise' } });
-      $('#pvOut').innerHTML = `<div class="pdfbar"><span class="muted">${r.text.split(/\s+/).length} words · ${r.kind} letter</span><a class="btn sm" href="${fileUrl(r.pdf, Date.now())}" download="Sample_Cover_Letter.pdf">Download PDF</a></div><iframe class="pdfframe" title="Sample cover letter" src="${fileUrl(r.pdf, Date.now())}#toolbar=0&navpanes=0&view=FitH"></iframe>`;
-    } catch (e) { $('#pvOut').textContent = e.message; } finally { ev.target.disabled = false; }
-  };
 };
 
 // ---------- Shared: a selectable list with a select-all bar ----------
@@ -972,7 +925,7 @@ VIEWS.answers = async (view) => {
 };
 
 // ---------- Memory: what Joblin knows about you ----------
-const FACT_CATS = [['general', 'About me'], ['experience', 'Experience & projects'], ['goals', 'Goals & interests'], ['outreach', 'For emails']];
+const FACT_CATS = [['general', 'About me'], ['companies', 'Companies I like'], ['preferences', 'Job preferences'], ['experience', 'Experience & projects'], ['goals', 'Goals & interests'], ['outreach', 'For emails']];
 VIEWS.memory = async (view) => {
   const { facts, answers } = await api('/memory');
   if (!SET) await loadSettings();
@@ -1003,7 +956,251 @@ VIEWS.memory = async (view) => {
   $('#ansForget')?.addEventListener('click', async () => { const ids = pickAns(); if (!(await ask({ title: `Forget ${ids.length} ${ids.length === 1 ? 'answer' : 'answers'}?`, body: 'Joblin won’t reuse them on future applications.', ok: 'Forget', danger: true }))) return; await api('/answers/bulk', { method: 'POST', body: { ids, action: 'delete' } }); render(); });
 };
 
+// ---------- Positions: keywords for any field ----------
+function positionsEditor(el, _suggested, { onboarding = false } = {}) {
+  const loc0 = (SET.sources?.boards?.locations || ['Canada'])[0] || 'Canada';
+  let vals = (SET.search.queries || []).map((q) => q.keywords);
+  el.innerHTML = `<div class="chipbox" id="posChips"></div>
+    <p class="muted" style="font-size:12.5px;margin:8px 0 0">Type any job title or keyword (“marketing coordinator”, “structural engineer”, “investment banking”). Joblin matches each job to your best resume automatically.</p>`;
+  chipInput($('#posChips', el), { values: vals, suggestions: POSITION_SUGGESTIONS, placeholder: vals.length ? 'Add another position…' : 'e.g. Finance Intern', onChange: (v) => (vals = v) });
+  return () => vals.map((k) => {
+    const prev = (SET.search.queries || []).find((q) => q.keywords.toLowerCase() === k.toLowerCase());
+    return { keywords: k, location: prev?.location || loc0, track: prev?.track && prev.track !== 'swe' && prev.track !== 'finance' ? prev.track : 'auto' };
+  });
+}
+
+SETTINGS.positions = async (el) => {
+  el.innerHTML = `<section class="panel panel-b"><div class="panel-h" style="padding:0 0 4px"><h2>Positions you’re applying for</h2></div>
+      <p class="muted" style="margin:0 0 12px;font-size:13px">You can also just tell Joblin in the chat: “add product management roles”.</p><div id="pe"></div></section>
+    <section class="panel panel-b"><label class="f">Skip titles containing</label><div class="chipbox" id="exclChips" style="margin-top:6px"></div>
+    <div class="grid2" style="margin-top:14px"><label class="f">Posted within<select id="posted">${['day', 'week', 'month'].map((p) => `<option value="${p}" ${SET.search.postedWithin === p ? 'selected' : ''}>Past ${p}</option>`).join('')}</select></label>
+    <label class="f">LinkedIn results per search<input type="number" id="perQ" min="5" max="50" value="${Math.min(50, SET.search.maxJobsPerQuery)}"></label></div></section>
+    <div><button class="btn primary" id="saveQ">Save positions</button></div>`;
+  const get = positionsEditor($('#pe'));
+  let excl = SET.search.excludeTitleWords || [];
+  chipInput($('#exclChips'), { values: excl, suggestions: ['senior', 'sr.', 'staff', 'principal', 'lead', 'manager', 'director', 'head of', 'vp', 'phd', 'clearance'], placeholder: 'e.g. senior', onChange: (v) => (excl = v) });
+  $('#saveQ').onclick = () => saveSettings({ search: { queries: get(), excludeTitleWords: excl, postedWithin: $('#posted').value, maxJobsPerQuery: Math.min(50, +$('#perQ').value || 25) } }, 'Positions saved');
+};
+
+// ---------- Job sources: where to look, and which companies ----------
+SETTINGS.sources = async (el) => {
+  const B = SET.sources.boards, Li = SET.sources.linkedin;
+  let locs = B.locations || [];
+  el.innerHTML = `<section class="panel panel-b">
+    <div class="srow"><div class="l"><b>Company job boards</b><span>Open roles straight from companies’ Greenhouse, Lever and Ashby pages. Joblin can submit every one of these itself.</span></div><div class="ctl">${sw('bOn', B.enabled !== false)}</div></div>
+    <div class="srow"><div class="l"><b>LinkedIn</b><span>Searches LinkedIn with your positions. Needs LinkedIn connected.</span></div><div class="ctl">${sw('lOn', Li.enabled !== false)}</div></div>
+    <div class="srow"><div class="l"><b>New jobs per search</b><span>Kept small so each search finishes quickly (up to 60).</span></div><div class="ctl"><input type="number" id="bMax" min="5" max="60" value="${Math.min(60, B.maxPerRun || 30)}" style="width:90px"></div></div>
+  </section>
+  <section class="panel panel-b"><div class="panel-h" style="padding:0 0 6px"><h2>Where</h2></div>
+    <p class="muted" style="margin:0 0 10px;font-size:13px">Add countries, provinces, states or cities. “Remote” only counts when a job isn’t tied to another country.</p>
+    <div class="chipbox" id="locChips"></div>
+    <div class="srow" style="margin-top:8px"><div class="l"><b>Include roles without “intern” or “new grad” in the title</b><span>Off keeps it to internships, co-ops and early-career roles.</span></div><div class="ctl">${sw('bEntry', B.includeEntryLevelWithoutKeyword)}</div></div></section>
+  <section class="panel panel-b"><div class="panel-h" style="padding:0 0 6px"><h2>Companies you want</h2></div>
+    <p class="muted" style="margin:0 0 10px;font-size:13px">Add a company and Joblin finds its job board, or searches LinkedIn for it. You can also say “apply to Shopify and RBC” in the chat.</p>
+    <div class="cos" id="cos"></div>
+    <div style="display:flex;gap:8px;margin-top:10px"><input type="text" id="coIn" placeholder="Company name, e.g. Wealthsimple"><button class="btn" id="coAdd">Add company</button></div>
+    <div class="srow" style="margin-top:8px"><div class="l"><b>Only search these companies</b><span>Off also checks Joblin’s list of ~75 companies that hire students.</span></div><div class="ctl">${sw('onlyT', SET.search.onlyTargets)}</div></div></section>
+  <div><button class="btn primary" id="saveSrc">Save job sources</button></div>`;
+  chipInput($('#locChips'), { values: locs, suggestions: LOCATION_SUGGESTIONS, placeholder: 'Add a place…', onChange: (v) => (locs = v) });
+  const drawCos = () => {
+    const cos = SET.search.companies || [];
+    $('#cos').innerHTML = cos.map((c, i) => `<div class="co">${mono(c.name)}<div><b>${esc(c.name)}</b><span class="muted">${c.board ? `Job board found (${esc(c.board.split(':')[0])})` : 'Searched on LinkedIn'}</span></div><button class="btn sm ghost" data-rmco="${i}">Remove</button></div>`).join('') || '<div class="muted" style="font-size:13px">No companies yet.</div>';
+    $$('[data-rmco]').forEach((b) => b.onclick = async () => { const cos2 = (SET.search.companies || []).filter((_, i) => i !== +b.dataset.rmco); await saveSettings({ search: { companies: cos2 } }, 'Company removed'); drawCos(); });
+  };
+  drawCos();
+  const addCo = async () => {
+    const name = $('#coIn').value.trim(); if (!name) return;
+    $('#coAdd').disabled = true; $('#coAdd').textContent = 'Looking it up…';
+    try { const r = await api('/companies', { method: 'POST', body: { name } }); await loadSettings(); toast(r.board ? `Found ${name}’s job board` : `${name} will be searched on LinkedIn`); $('#coIn').value = ''; drawCos(); }
+    catch (e) { toast(e.message, true); } finally { $('#coAdd').disabled = false; $('#coAdd').textContent = 'Add company'; }
+  };
+  $('#coAdd').onclick = addCo; $('#coIn').onkeydown = (e) => e.key === 'Enter' && addCo();
+  $('#saveSrc').onclick = () => saveSettings({ sources: { boards: { enabled: $('#bOn').checked, maxPerRun: Math.min(60, +$('#bMax').value || 30), locations: locs, includeEntryLevelWithoutKeyword: $('#bEntry').checked }, linkedin: { enabled: $('#lOn').checked } },
+    search: { onlyTargets: $('#onlyT').checked, queries: (SET.search.queries || []).map((q) => ({ ...q, location: locs[0] || q.location })) } }, 'Job sources saved');
+};
+
+// ---------- Automation ----------
+const ICON_REVIEW = '<svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 9h8M8 13h5"/><path d="M14.5 17l1.5 1.5 3-3"/></svg>';
+const ICON_BOLT = '<svg viewBox="0 0 24 24"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg>';
+SETTINGS.automation = async (el) => {
+  const m = SET.mode, a = SET.apply;
+  const every = m.discoverEvery ?? m.discoverEveryHours ?? 6, unit = m.discoverUnit || 'hours';
+  el.innerHTML = `
+  <section class="panel panel-b"><div class="panel-h" style="padding:0 0 14px"><h2>How Joblin applies</h2></div>
+    <div class="choice" id="modeChoice">
+      <button data-m="review" class="${m.type === 'review' ? 'on' : ''}"><span class="mico">${ICON_REVIEW}</span><b>Review first</b><span>Joblin prepares applications and waits. Each one you approve is sent right away.</span></button>
+      <button data-m="autopilot" class="${m.type === 'autopilot' ? 'on' : ''}"><span class="mico bolt">${ICON_BOLT}</span><b>Autopilot</b><span>Joblin finds, writes and submits on its own schedule. You check in when you like.</span></button>
+    </div></section>
+  <section class="panel panel-b">
+    <div class="srow"><div class="l"><b>Search automatically</b><span>Always on in autopilot.</span></div><div class="ctl">${sw('autoDiscover', m.autoDiscover || m.type === 'autopilot')}</div></div>
+    <div class="srow"><div class="l"><b>Search every</b><span>How often Joblin looks for new jobs.</span></div>
+      <div class="ctl" style="display:flex;gap:8px;align-items:center"><input type="number" id="every" min="1" max="60" value="${every}" style="width:76px">
+        <select id="unit" style="width:auto">${['hours', 'days', 'weeks'].map((u) => `<option ${u === unit ? 'selected' : ''}>${u}</option>`).join('')}</select>
+        <span id="atWrap" ${unit === 'hours' ? 'hidden' : ''}>at <input type="time" id="at" value="${esc(m.discoverAt || '09:00')}" style="width:auto"></span></div></div>
+    <div class="srow"><div class="l"><b>Applications written per search</b><span>Small batches finish fast; the next search picks up the rest (up to 15).</span></div><div class="ctl"><input type="number" id="batch" min="1" max="15" value="${Math.min(15, m.batchSize || 8)}" style="width:76px"></div></div>
+    <div class="srow"><div class="l"><b>Applications sent per round</b><span>Up to 30, then Joblin takes a breather before the next round.</span></div><div class="ctl"><input type="number" id="maxApps" min="1" max="30" value="${Math.min(30, a.maxApplicationsPerRun || 15)}" style="width:76px"></div></div>
+    <div class="srow"><div class="l"><b>Autopilot minimum fit</b><span>Skip jobs scoring below this (0–100).</span></div><div class="ctl"><input type="number" id="minScore" min="0" max="100" value="${m.minScore ?? 0}" style="width:76px"></div></div>
+  </section>
+  <section class="panel panel-b">
+    <div class="srow"><div class="l"><b>While Joblin works</b><span>Hidden uses a real Chrome window you never see; it never takes your keyboard or mouse. Visible lets you watch.</span></div>
+      <div class="ctl"><div class="seg" id="browserSeg"><button data-b="background" class="${a.browser !== 'window' ? 'on' : ''}">Hidden</button><button data-b="window" class="${a.browser === 'window' ? 'on' : ''}">Visible</button></div></div></div>
+    <div class="srow"><div class="l"><b>Submit applications</b><span>Off means Joblin fills each form but leaves it unsent, for testing.</span></div><div class="ctl">${sw('autoSubmit', a.autoSubmit)}</div></div>
+  </section>
+  <div><button class="btn primary" id="saveAuto">Save automation settings</button></div>`;
+  let mode = m.type, browser = a.browser;
+  $$('#modeChoice button').forEach((b) => b.onclick = () => { mode = b.dataset.m; $$('#modeChoice button').forEach((x) => x.classList.toggle('on', x === b)); });
+  $$('#browserSeg button').forEach((b) => b.onclick = () => { browser = b.dataset.b; $$('#browserSeg button').forEach((x) => x.classList.toggle('on', x === b)); });
+  $('#unit').onchange = () => ($('#atWrap').hidden = $('#unit').value === 'hours');
+  $('#saveAuto').onclick = async () => {
+    if (mode === 'autopilot' && m.type !== 'autopilot' && !(await ask({ title: 'Turn on autopilot?', body: 'Joblin will find jobs and submit applications on its own schedule, without asking you first.', ok: 'Turn on autopilot' }))) return;
+    const clamp = (v, lo, hi, d) => Math.max(lo, Math.min(hi, Number(v) || d));
+    saveSettings({ mode: { type: mode, autoDiscover: $('#autoDiscover').checked, discoverEvery: clamp($('#every').value, 1, 60, 6), discoverUnit: $('#unit').value, discoverAt: $('#at').value, batchSize: clamp($('#batch').value, 1, 15, 8), minScore: clamp($('#minScore').value, 0, 100, 0) },
+      apply: { browser, window: browser === 'window' ? 'visible' : 'hidden', autoSubmit: $('#autoSubmit').checked, maxApplicationsPerRun: clamp($('#maxApps').value, 1, 30, 15) } }, 'Automation settings saved');
+  };
+};
+
+// ---------- Resumes: one per type of job ----------
+function resumeCard(track, label = track, own = true, removable = false) {
+  return `<section class="panel panel-b" id="rc-${track}"><div class="panel-h" style="padding:0 0 12px"><h2>${esc(label)}</h2>
+      <div class="right" id="rcq-${track}"></div>${removable ? `<button class="btn sm ghost danger" data-rmtrack="${track}">Remove</button>` : ''}</div>
+    ${own ? '' : `<p class="muted" style="margin:-4px 0 10px;font-size:13px">Using your ${track && /swe|data|ml|design|security|mechanical|electrical|civil|chemical|product/.test(track) ? 'software' : 'finance'} resume for now. Upload one made for ${esc(label.toLowerCase())} roles.</p>`}
+    <div class="drop" data-drop="${track}" tabindex="0" role="button">Drop a PDF or Word file here, or click to choose<input type="file" accept=".pdf,.docx,.doc" hidden></div>
+    <div id="rcb-${track}"></div></section>`;
+}
+SETTINGS.resumes = async (el) => {
+  const { tracks, catalog } = await api('/tracks');
+  el.innerHTML = `<p class="muted" style="margin:0;font-size:13px">Add a resume for each kind of job you apply to. Joblin picks the best one for every posting, reorders your bullet points to match it, and never adds experience you don’t have.</p>
+    ${tracks.map((t) => resumeCard(t.id, t.label, t.own, !['swe', 'finance'].includes(t.id))).join('')}
+    <section class="panel panel-b"><div class="panel-h" style="padding:0 0 10px"><h2>Add a resume type</h2></div><div class="chipbox" id="addTrack"></div></section>`;
+  for (const t of tracks) await mountResume(t.id);
+  chipInput($('#addTrack'), { values: [], suggestions: catalog.filter((c) => !tracks.some((t) => t.id === c.id)).map((c) => c.label), placeholder: '+ e.g. Accounting, Marketing, Mechanical engineering',
+    onChange: async (v) => { if (!v.length) return; await api('/tracks', { method: 'POST', body: { name: v[v.length - 1] } }); toast('Resume type added'); await loadSettings(); SETTINGS.resumes(el); } });
+  $$('[data-rmtrack]').forEach((b) => b.onclick = async () => {
+    if (!(await ask({ title: 'Remove this resume type?', body: 'Jobs will use your other resumes instead.', ok: 'Remove', danger: true }))) return;
+    await api(`/tracks/${b.dataset.rmtrack}`, { method: 'DELETE' }); SETTINGS.resumes(el);
+  });
+};
+
+// ---------- Cover letters: a template per resume type, "/" inserts a field ----------
+const TOKENS = [['company', 'Company'], ['role', 'Role'], ['company_focus', 'What the company does'], ['role_focus', 'What the role does'], ['name', 'Your name'], ['first_name', 'First name'],
+  ['school', 'School'], ['major', 'Major'], ['degree', 'Degree'], ['graduation', 'Graduation date'], ['current_employer', 'Current employer'], ['current_title', 'Current title'], ['city', 'City']];
+const tokLabel = (k) => (TOKENS.find((t) => t[0] === k) || [k, k])[1];
+function tplToHTML(text) {
+  return esc(text).replace(/\{\{(\w+)\}\}/g, (_, k) => `<span class="tok" contenteditable="false" data-k="${k}">${esc(tokLabel(k))}</span>`);
+}
+function htmlToTpl(el) {
+  let out = '';
+  const walk = (n) => {
+    for (const c of n.childNodes) {
+      if (c.nodeType === 3) out += c.nodeValue;
+      else if (c.classList?.contains('tok')) out += `{{${c.dataset.k}}}`;
+      else if (c.tagName === 'BR') out += '\n';
+      else { if (/^(DIV|P)$/.test(c.tagName) && out && !out.endsWith('\n')) out += '\n'; walk(c); }
+    }
+  };
+  walk(el);
+  return out.replace(/ /g, ' ');
+}
+function slashEditor(el, text) {
+  el.className = 'tpl-ed'; el.setAttribute('contenteditable', 'plaintext-only'); el.spellcheck = true;
+  el.innerHTML = tplToHTML(text);
+  const menu = document.createElement('div'); menu.className = 'dd-menu slash-menu'; menu.hidden = true; document.body.appendChild(menu);
+  let items = [], active = 0, range = null;
+  const close = () => { menu.hidden = true; range = null; };
+  const insert = (k) => {
+    if (!range) return;
+    const sel = getSelection(); sel.removeAllRanges(); sel.addRange(range);
+    const node = range.startContainer, off = range.startOffset, txt = node.nodeValue || '', at = txt.lastIndexOf('/', off - 1);
+    const r = document.createRange(); r.setStart(node, at); r.setEnd(node, off); r.deleteContents();
+    const tok = document.createElement('span'); tok.className = 'tok'; tok.contentEditable = 'false'; tok.dataset.k = k; tok.textContent = tokLabel(k);
+    r.insertNode(tok);
+    const space = document.createTextNode(' '); tok.after(space);
+    const after = document.createRange(); after.setStart(space, 1); after.collapse(true); sel.removeAllRanges(); sel.addRange(after);
+    close();
+  };
+  el.addEventListener('input', () => {
+    const sel = getSelection(); if (!sel.rangeCount) return close();
+    const r = sel.getRangeAt(0), node = r.startContainer;
+    if (node.nodeType !== 3) return close();
+    const before = node.nodeValue.slice(0, r.startOffset), m = before.match(/(?:^|\s)\/(\w*)$/);
+    if (!m) return close();
+    items = TOKENS.filter(([k, l]) => !m[1] || k.includes(m[1].toLowerCase()) || l.toLowerCase().includes(m[1].toLowerCase()));
+    if (!items.length) return close();
+    range = r.cloneRange(); active = 0;
+    menu.innerHTML = items.map(([k, l], i) => `<div class="dd-opt ${i === 0 ? 'active' : ''}" data-k="${k}"><span class="tok sm">${esc(l)}</span></div>`).join('');
+    const rect = r.getBoundingClientRect();
+    Object.assign(menu.style, { position: 'fixed', left: `${Math.min(rect.left, innerWidth - 280)}px`, top: `${rect.bottom + 6}px`, minWidth: '240px' });
+    menu.hidden = false;
+    $$('.dd-opt', menu).forEach((o) => o.onmousedown = (e) => { e.preventDefault(); insert(o.dataset.k); });
+  });
+  el.addEventListener('keydown', (e) => {
+    if (menu.hidden) return;
+    const opts = $$('.dd-opt', menu);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); active = Math.max(0, Math.min(opts.length - 1, active + (e.key === 'ArrowDown' ? 1 : -1))); opts.forEach((o, i) => o.classList.toggle('active', i === active)); }
+    else if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); insert(items[active][0]); }
+    else if (e.key === 'Escape') close();
+  });
+  el.addEventListener('blur', () => setTimeout(close, 150));
+  window.addEventListener('hashchange', () => menu.remove(), { once: true });
+  return () => htmlToTpl(el);
+}
+
+SETTINGS.cover = async (el) => {
+  const C = SET.coverLetter, list = SET.trackList || [{ id: 'swe', label: 'Software engineering' }, { id: 'finance', label: 'Finance' }];
+  let cur = state.coverTrack && list.some((t) => t.id === state.coverTrack) ? state.coverTrack : list[0].id;
+  el.innerHTML = `
+  <section class="panel panel-b"><div class="panel-h" style="padding:0 0 6px"><h2>How cover letters are written</h2></div>
+    <p class="muted" style="margin:0 0 6px;font-size:13px;max-width:72ch">Most jobs get the template for that resume type with the blue fields filled in, which costs one small model call. Jobs that fit you best get a <b>precise</b> letter: same voice and structure, but the “why this role” paragraph is rewritten from the posting and a paragraph matches their requirements to your experience.</p>
+    <div class="srow"><div class="l"><b>Write precise letters for jobs with fit of at least</b><span>0–100. You can also ask for one on any job in Review batch.</span></div><div class="ctl"><input type="number" id="pmin" min="0" max="100" value="${C.preciseMinScore ?? 75}" style="width:80px"></div></div>
+    <div class="srow"><div class="l"><b>Always write precise letters</b><span>Best letters, a few more model calls per job.</span></div><div class="ctl">${sw('palways', C.alwaysPrecise)}</div></div></section>
+  <section class="panel panel-b"><div class="panel-h" style="padding:0 0 10px"><h2>Templates</h2>
+      <div class="right"><button class="btn sm ghost" id="tplReset">Reset this template</button></div></div>
+    <div class="tabsrow" id="tplTabs">${list.map((t) => `<button data-t="${t.id}" class="${t.id === cur ? 'on' : ''}">${esc(t.label)}</button>`).join('')}<a class="link" href="#/settings" id="toResumes" style="font-size:13px;margin-left:6px">+ Add a type in Resumes</a></div>
+    <div id="tplEd"></div>
+    <p class="muted" style="font-size:12.5px;margin:8px 0 0">Type <b>/</b> to insert a field like company, role or what the company does. Fields show in blue and are filled in for each job.</p></section>
+  <section class="panel panel-b"><div class="panel-h" style="padding:0 0 12px"><h2>Try it</h2>
+      <div class="right"><div class="seg" id="pvKind"><button data-k="template" class="on">Template</button><button data-k="precise">Precise</button></div></div></div>
+    <button class="btn" id="pvGo">Save and write a sample letter</button><div id="pvOut" style="margin-top:14px"></div></section>
+  <div><button class="btn primary" id="saveCl">Save cover letter settings</button></div>`;
+  const edited = {};
+  let getText;
+  const open = (t) => {
+    if (getText) edited[cur] = getText();
+    cur = t; state.coverTrack = t;
+    $$('#tplTabs button').forEach((b) => b.classList.toggle('on', b.dataset.t === t));
+    getText = slashEditor($('#tplEd'), edited[t] ?? C.activeTemplates[t] ?? C.defaultTemplates[t] ?? '');
+  };
+  open(cur);
+  $$('#tplTabs button').forEach((b) => b.onclick = () => open(b.dataset.t));
+  $('#toResumes').onclick = () => (state.settingsTab = 'resumes');
+  $('#tplReset').onclick = () => { edited[cur] = C.defaultTemplates[cur]; getText = slashEditor($('#tplEd'), C.defaultTemplates[cur]); };
+  let pvk = 'template';
+  $$('#pvKind button').forEach((b) => b.onclick = () => { pvk = b.dataset.k; $$('#pvKind button').forEach((x) => x.classList.toggle('on', x === b)); });
+  const patch = () => {
+    edited[cur] = getText();
+    const templates = {}; for (const [t, v] of Object.entries(edited)) templates[t] = v.trim() === (C.defaultTemplates[t] || '').trim() ? '' : v;
+    return { coverLetter: { preciseMinScore: +$('#pmin').value, alwaysPrecise: $('#palways').checked, templates } };
+  };
+  $('#saveCl').onclick = async () => { await saveSettings(patch(), 'Cover letter settings saved'); await loadSettings(); };
+  $('#pvGo').onclick = async (ev) => {
+    ev.target.disabled = true;
+    $('#pvOut').innerHTML = `<div class="work" style="grid-template-columns:120px 1fr;padding:6px 0"><img src="/img/joblin-working.png" alt="" style="width:120px"><div><b>Joblin is writing a ${pvk} ${esc((list.find((t) => t.id === cur) || {}).label || '')} letter…</b><div class="muted">${pvk === 'precise' ? 'About a minute' : 'About 15 seconds'} on the local model.</div></div></div>`;
+    try {
+      await api('/settings', { method: 'PUT', body: patch() }); await loadSettings();
+      const r = await api('/cover/preview', { method: 'POST', body: { track: cur, precise: pvk === 'precise' } });
+      $('#pvOut').innerHTML = `<div class="pdfbar"><span class="muted">${r.text.split(/\s+/).length} words · ${r.kind} letter</span><a class="btn sm" href="${fileUrl(r.pdf, Date.now())}" download="Sample_Cover_Letter.pdf">Download PDF</a></div><iframe class="pdfframe" title="Sample cover letter" src="${fileUrl(r.pdf, Date.now())}#toolbar=0&navpanes=0&view=FitH"></iframe>`;
+    } catch (e) { $('#pvOut').textContent = e.message; } finally { ev.target.disabled = false; }
+  };
+};
+
+// ---------- AI model logos ----------
+const PROVIDER_ICONS = {
+  ollama: { img: '/img/ai/ollama.webp' }, anthropic: { img: '/img/ai/anthropic.webp' }, openai: { img: '/img/ai/openai.webp' }, gemini: { img: '/img/ai/gemini.webp' },
+};
+const logoTile = (src, alt = '') => `<span class="logo-tile"><img src="${src}" alt="${esc(alt)}"></span>`;
+
 // ---------- Boot ----------
+mountChat();
 await refreshSummary();
 loadSettings().catch(() => {});
 render();

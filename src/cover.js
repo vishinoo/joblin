@@ -231,6 +231,12 @@ function fillTemplate(tpl, job, analysis, track) {
   const name = `${config.profile.firstName} ${config.profile.lastName}`;
   return tpl.replace(/\{\{company\}\}/g, job.company).replace(/\{\{role\}\}/g, proseTitle(job.title))
     .replace(/\{\{role_focus\}\}/g, role_focus).replace(/\{\{company_focus\}\}/g, company_focus).replace(/\{\{name\}\}/g, name)
+    .replace(/\{\{(\w+)\}\}/g, (m, k) => {
+      const P = config.profile;
+      const v = { first_name: P.firstName, school: P.school, major: P.major, degree: P.degree, city: P.city, current_employer: P.currentEmployer, current_title: P.currentTitle,
+        graduation: [P.graduationMonth, P.graduationYear].filter(Boolean).join(' ') }[k];
+      return v ?? m;
+    })
     .replace(/\n{3,}/g, '\n\n').trim();
 }
 
