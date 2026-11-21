@@ -34,7 +34,7 @@ Then I hand it all to you for review. You say yes, I hit submit.
 <!-- 🖼️ IMAGE SLOT: docs/images/joblin-reading-posting.png — Joblin at his desk squinting at a pile of job postings -->
 <p align="center"><img src="docs/images/joblin-reading-posting.png" alt="Joblin reading job postings at his desk" width="360"></p>
 
-## Why a goblin on your own machine?
+## Why a joblin on your own machine?
 
 - **Free.** Ollama runs a language model on your laptop. No subscription, no credits, no per-application fees.
 - **Private.** Your resume, your answers and your inbox stay on your computer. Nothing goes to a startup's server.
@@ -72,7 +72,7 @@ You need [Node.js 20+](https://nodejs.org), [Ollama](https://ollama.com/download
 
 ```bash
 ollama pull qwen2.5:3b                           # give Joblin a brain
-git clone https://github.com/vishinoo/joblin.git # fetch the goblin
+git clone https://github.com/vishinoo/joblin.git # fetch the joblin
 cd joblin
 npm install
 npx playwright install chromium
@@ -123,7 +123,7 @@ The browser runs invisibly in the background by default, so you can keep using y
 <!-- 🖼️ IMAGE SLOT: docs/images/joblin-tips.png — Joblin pointing at a chalkboard like a professor -->
 <img src="docs/images/joblin-tips.png" alt="Joblin giving tips" width="140" align="right">
 
-> *"Listen to the goblin. The goblin has seen things."*
+> *"Listen to the joblin. The joblin has seen things."*
 
 - **Feed me a good resume.** I only use bullets that are really in it, so better bullets mean better letters. Add numbers where you can.
 - **Start in Review mode.** Read my first batch before trusting me with Autopilot. I'm good, but I'm still a goblin.
