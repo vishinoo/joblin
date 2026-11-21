@@ -10,8 +10,8 @@ import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { ROOT, config, paths } from './config.js';
-import { log } from './db.js';
+import { ROOT, config, paths } from './core/config.js';
+import { log } from './core/db.js';
 
 const run = promisify(execFile);
 export const REPO = 'vishinoo/joblin';

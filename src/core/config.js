@@ -2,9 +2,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const CONFIG_PATH = path.join(ROOT, 'config.json');
-const ENV_PATH = path.join(ROOT, '.env');
+export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+// Your personal files (settings, secrets, database, browser profile). Defaults to the project folder;
+// JOBLIN_HOME points somewhere else (the tests use a throwaway folder so they never touch your data).
+export const HOME = process.env.JOBLIN_HOME ? path.resolve(process.env.JOBLIN_HOME) : ROOT;
+const CONFIG_PATH = path.join(HOME, 'config.json');
+const ENV_PATH = path.join(HOME, '.env');
 
 // Minimal .env loader (GMAIL_USER, GMAIL_APP_PASSWORD, ...)
 function readEnv() {
@@ -64,10 +67,10 @@ export function saveConfig(patch) {
 }
 
 export const paths = {
-  data: path.join(ROOT, 'data'),
-  output: path.join(ROOT, 'data', 'output'),
-  uploads: path.join(ROOT, 'data', 'uploads'),
-  browser: path.join(ROOT, 'data', 'browser-profile'),
+  data: path.join(HOME, 'data'),
+  output: path.join(HOME, 'data', 'output'),
+  uploads: path.join(HOME, 'data', 'uploads'),
+  browser: path.join(HOME, 'data', 'browser-profile'),
   resumes: path.join(ROOT, 'resumes'),
   templates: path.join(ROOT, 'templates'),
 };
@@ -77,3 +80,15 @@ fs.mkdirSync(paths.uploads, { recursive: true });
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export const jitter = (min, max) => sleep(min + Math.random() * (max - min));
 export const slug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
+
+// The search a run uses: a one-off request from the chat (config.runSearch) or your saved settings.
+export function activeSearch() {
+  const r = config.runSearch || {};
+  return {
+    queries: (r.queries?.length ? r.queries : (config.search.queries || [])).map((q) => (typeof q === 'string' ? { keywords: q } : q)).filter((q) => q?.keywords),
+    locations: r.locations?.length ? r.locations : (config.sources?.boards?.locations || []),
+    companies: r.companies ?? (config.search.companies || []),
+    onlyTargets: r.onlyTargets ?? config.search.onlyTargets,
+    oneOff: Boolean(config.runSearch),
+  };
+}

@@ -50,7 +50,8 @@
     "jobStartMonth": "",
     "jobStartYear": "",
     "jobEndMonth": "",
-    "jobEndYear": ""
+    "jobEndYear": "",
+    "bases": []
   },
   "search": {
     "queries": [

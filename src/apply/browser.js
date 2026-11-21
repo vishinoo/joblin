@@ -1,7 +1,7 @@
 import { chromium } from 'playwright';
 import { execFile } from 'node:child_process';
-import { config, paths } from './config.js';
-import { kv, log } from './db.js';
+import { config, paths } from '../core/config.js';
+import { kv, log } from '../core/db.js';
 
 let ctx, ctxHeadless;
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
@@ -41,6 +41,26 @@ export async function showBrowser() {
 }
 export const browserHidden = () => hiddenWanted;
 
+// Watchdog: while Joblin's Chrome is meant to be hidden, check every second which app is in front.
+// If Chrome jumped forward (a new tab, a site's pop-up, a relaunch), hide it again and give focus back to
+// the app you were using. Your last app is remembered so focus goes back to the right place.
+let watchdog = null;
+function startWatchdog() {
+  if (process.platform !== 'darwin' || watchdog) return;
+  let busy = false;
+  watchdog = setInterval(async () => {
+    if (busy || !ctx || !hiddenWanted) return;
+    busy = true;
+    try {
+      const [front, chrome] = await Promise.all([frontmostPid(), chromePid()]);
+      if (front && front !== chrome) returnTo = front;
+      else if (front && front === chrome) await hideBrowser();
+    } finally { busy = false; }
+  }, 1000);
+  watchdog.unref?.();
+}
+const stopWatchdog = () => { clearInterval(watchdog); watchdog = null; };
+
 // Each worker gets its own tab (searching and applying can run at the same time). Reusing tabs
 // means no new windows, so nothing ever jumps in front of you.
 const heldPages = new WeakSet();
@@ -56,7 +76,14 @@ export async function workPage(c, role = 'find') {
   return p;
 }
 
-export async function getContext({ headless = config.apply.browser !== 'window', hidden = false } = {}) {
+// The searcher and the applier can ask for Chrome at the same moment; only one may launch it (one profile = one Chrome).
+let opening = Promise.resolve();
+export function getContext(opts = {}) {
+  const run = opening.then(() => openContext(opts));
+  opening = run.catch(() => {});
+  return run;
+}
+async function openContext({ headless = config.apply.browser !== 'window', hidden = false } = {}) {
   // On a Mac, "background" means a real Chrome that Joblin hides: sites trust it, you never see it,
   // and searching and applying share one browser, so it isn't relaunched mid-run.
   if (process.platform === 'darwin' && headless && config.apply.browser !== 'window') { headless = false; hidden = true; }
@@ -73,11 +100,12 @@ export async function getContext({ headless = config.apply.browser !== 'window',
   try { ctx = await chromium.launchPersistentContext(paths.browser, { ...opts, channel: 'chrome' }); }
   catch { ctx = await chromium.launchPersistentContext(paths.browser, opts); } // bundled Chromium fallback
   ctxHeadless = headless;
-  ctx.on('close', () => { ctx = null; hiddenWanted = false; rolePages.clear(); });
+  ctx.on('close', () => { ctx = null; hiddenWanted = false; rolePages.clear(); stopWatchdog(); });
   if (!headless && hidden) {
     await hideBrowser();
     // New windows can pop the app back up; hide it again whenever one opens (unless you were handed a form).
-    ctx.on('page', () => { if (hiddenWanted) setTimeout(() => hideBrowser(), 150); });
+    ctx.on('page', () => { if (hiddenWanted) setTimeout(() => hideBrowser(), 60); });
+    startWatchdog();
   }
   return ctx;
 }
@@ -104,12 +132,11 @@ export async function connectLinkedIn() {
     const page = c.pages()[0] || (await c.newPage());
     await page.bringToFront();
     if (!(await hasSession(c))) await page.goto('https://www.linkedin.com/login');
+    // Close the moment the sign-in cookie appears; no extra page loads.
     const deadline = Date.now() + 10 * 60 * 1000;
-    while (Date.now() < deadline && !(await hasSession(c).catch(() => false))) await new Promise((r) => setTimeout(r, 1500));
+    while (Date.now() < deadline && !(await hasSession(c).catch(() => false))) await new Promise((r) => setTimeout(r, 400));
     if (await hasSession(c).catch(() => false)) {
-      await page.goto('https://www.linkedin.com/feed/', { waitUntil: 'domcontentloaded' }).catch(() => {});
-      const name = await page.locator('img.global-nav__me-photo, .feed-identity-module__actor-meta a').first().evaluate((el) => el.getAttribute('alt') || el.innerText || '').catch(() => '');
-      setLinkedinStatus(true, name.trim());
+      setLinkedinStatus(true, '');
       log('linkedin', 'LinkedIn connected');
     } else setLinkedinStatus(false, 'sign-in timed out');
   } catch (e) {

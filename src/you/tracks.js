@@ -2,7 +2,7 @@
 // You start with Software engineering and Finance; add more from the catalog (or your own) in Settings → Resumes.
 import fs from 'node:fs';
 import path from 'node:path';
-import { config, paths, saveConfig } from './config.js';
+import { config, paths, saveConfig } from '../core/config.js';
 
 // base: which existing resume a new type starts from until you upload your own.
 export const CATALOG = [

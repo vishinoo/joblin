@@ -1,12 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { chromium } from 'playwright';
-import { config, paths, slug } from './config.js';
-import { generateJSON, clip } from './llm.js';
+import { config, paths, slug } from '../core/config.js';
+import { generateJSON, clip } from '../core/llm.js';
 
 import { writeCoverLetter as engineWrite, analyzeJob } from './cover.js';
 
-import { tracks, resumeFileFor, scoreTracks, trackLabel } from './tracks.js';
+import { tracks, resumeFileFor, scoreTracks, trackLabel } from '../you/tracks.js';
+import { positionsOf, rolePrefs, roleKey, applyOrder } from '../you/profile.js';
+import { db } from '../core/db.js';
 
 // Resume content per type (falls back to the type it's based on until you confirm your own).
 let cache = new Map();
@@ -55,6 +57,9 @@ export async function tailorResume(job, track) {
   for (const section of base.sections)
     for (const item of section.items)
       item.bullets.sort((a, b) => relevance(b, kw) - relevance(a, kw));
+  // Your chosen role order (Settings → Resumes) sets the order within each section.
+  const prefs = rolePrefs(track);
+  if (prefs.order) for (const section of base.sections) section.items = applyOrder(section.items, prefs.order);
   base.skills.sort((a, b) => relevance(b, kw) - relevance(a, kw));
 
   const out = await generateJSON(
@@ -67,6 +72,28 @@ Respond as JSON: {"summary": "..."}`,
     { summary: base.headline });
   base.summary = String(out.summary || base.headline).slice(0, 260);
   return base;
+}
+
+// ---------- How a resume gets used: its roles, ranked for a real (or typical) job of that type ----------
+export function resumeUsage(track) {
+  const resume = getResume(track);
+  const t = tracks().find((x) => x.id === track) || { label: track, keywords: [] };
+  const real = db.prepare(`SELECT j.title, j.company, j.description FROM applications a JOIN jobs j ON j.id = a.job_id
+    WHERE a.track = ? AND j.description != '' ORDER BY a.updated_at DESC LIMIT 1`).get(track);
+  const job = real || { title: `${t.label} intern`, company: '', description: (t.keywords || []).join(' ') };
+  const kw = keywordsOf(`${job.title} ${job.title} ${job.description}`);
+  const roles = positionsOf(resume).map((p) => {
+    const ranked = [...p.bullets].sort((a, b) => relevance(b, kw) - relevance(a, kw));
+    const score = ranked.slice(0, 2).reduce((n, b) => n + relevance(b, kw), 0) + relevance(`${p.role} ${p.org}`, kw) * 2;
+    return { org: p.org, role: p.role, date: p.date, kind: p.kind, current: p.current, bullets: p.bullets.length, leadBullet: ranked[0] || '', score };
+  });
+  // Your order and leads win; otherwise Joblin ranks by fit and leads with the top two.
+  const prefs = rolePrefs(track);
+  roles.forEach((r) => (r.key = roleKey(r)));
+  const order = prefs.order ? applyOrder(roles, prefs.order, (r) => r.key) : [...roles].sort((a, b) => b.score - a.score);
+  order.forEach((r, i) => { r.rank = i + 1; r.lead = prefs.leads ? prefs.leads.has(r.key) : i < 2 && r.score > 0; });
+  return { custom: Boolean(prefs.order || prefs.leads), example: real ? { title: real.title, company: real.company, real: true } : { title: job.title, real: false }, roles,
+    projects: (resume.projects || []).length, skills: (resume.skills || []).length };
 }
 
 // ---------- PDF rendering ----------
@@ -134,8 +161,8 @@ function letterHTML(text) {
 
 let pdfBrowser;
 async function toPDF(html, file, { widthIn = 7.3, heightIn = 10, fitFont = false } = {}) {
-  pdfBrowser ??= await chromium.launch();
-  const page = await pdfBrowser.newPage();
+  pdfBrowser ??= chromium.launch(); // shared promise: two writers at once still get one browser
+  const page = await (await pdfBrowser).newPage();
   // Shrink to fit on one page (content box = page minus margins).
   await page.setViewportSize({ width: Math.round(widthIn * 96), height: Math.round(heightIn * 96) });
   await page.setContent(html, { waitUntil: 'load' });
@@ -155,7 +182,7 @@ async function toPDF(html, file, { widthIn = 7.3, heightIn = 10, fitFont = false
   await page.close();
   return file;
 }
-export async function closePdfBrowser() { await pdfBrowser?.close(); pdfBrowser = null; }
+export async function closePdfBrowser() { const b = pdfBrowser; pdfBrowser = null; await (await b)?.close().catch(() => {}); }
 
 export async function renderLetter(dir, text) {
   const name = `${config.profile.firstName}_${config.profile.lastName}`;

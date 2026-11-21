@@ -1,22 +1,21 @@
 import express from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
-import { ROOT, config, saveConfig, saveEnv, paths } from './config.js';
-import { db, kv, addTask, log } from './db.js';
-import { gmailReady, verifyGmail, resetTransport } from './mailer.js';
-import { llmAvailable, PROVIDERS, testModel, currentModel } from './llm.js';
-import { googleStatus, startGoogleAuth, disconnectGoogle } from './google.js';
-import { listAnswers, setAnswer, deleteAnswer, pendingCount, listFacts, addFact, updateFact, deleteFacts, deleteAnswers, confirmAnswers, unblockedBy } from './memory.js';
-import { getTemplate } from './cover.js';
-import { DEFAULT_BOARDS } from './sources/boards.js';
-import { chat, history as chatHistory, clearChat, resolveCompany } from './chat.js';
-import { tracks, CATALOG, addTrack, removeTrack, hasOwnResume, trackLabel, templateFileFor } from './tracks.js';
-import { writeCoverLetter, analyzeJob } from './cover.js';
-import { senderAddress } from './mailer.js';
-import { linkedinStatus, connectLinkedIn, disconnectLinkedIn, isBrowserBusy, showBrowser, heldOpen } from './browser.js';
-import { importResume, confirmResume, parseQuality } from './resumeImport.js';
-import { getResume, renderLetter, renderResumePreview, chooseTrack, renderSampleLetter } from './documents.js';
-import { prepareJob, suggestAnswer } from './apply.js';
+import { ROOT, config, saveConfig, saveEnv, paths } from './core/config.js';
+import { db, kv, addTask, log } from './core/db.js';
+import { gmailReady, verifyGmail, resetTransport, senderAddress } from './email/mailer.js';
+import { llmAvailable, PROVIDERS, testModel, currentModel, installedOllamaModels } from './core/llm.js';
+import { gmailWebStatus, connectGmailWeb, disconnectGmailWeb } from './email/gmailWeb.js';
+import { listAnswers, setAnswer, deleteAnswer, pendingCount, listFacts, addFact, updateFact, deleteFacts, deleteAnswers, confirmAnswers, unblockedBy } from './you/memory.js';
+import { DEFAULT_BOARDS } from './search/boards.js';
+import { chat, history as chatHistory, clearChat, resolveCompany } from './search/chat.js';
+import { tracks, CATALOG, addTrack, removeTrack, hasOwnResume, trackLabel, templateFileFor } from './you/tracks.js';
+import { getTemplate, writeCoverLetter, analyzeJob } from './apply/cover.js';
+import { linkedinStatus, connectLinkedIn, disconnectLinkedIn, isBrowserBusy, showBrowser, heldOpen } from './apply/browser.js';
+import { importResume, confirmResume, parseQuality } from './you/resumeImport.js';
+import { getResume, renderLetter, renderResumePreview, chooseTrack, renderSampleLetter, resumeUsage } from './apply/documents.js';
+import { allPositions } from './you/profile.js';
+import { prepareJob, suggestAnswer } from './apply/apply.js';
 import { updateRoutes } from './updater.js';
 
 const SUGGESTED = {
@@ -28,7 +27,7 @@ function publicSettings() {
   const c = structuredClone(config);
   if (c.email?.hunterApiKey) c.email.hunterApiKey = '••••' + c.email.hunterApiKey.slice(-4);
   c.llm.keys = Object.fromEntries(Object.entries(PROVIDERS).filter(([, v]) => v.key).map(([k, v]) => [k, process.env[v.key] ? '••••' + process.env[v.key].slice(-4) : '']));
-  c.llm.providers = Object.fromEntries(Object.entries(PROVIDERS).map(([k, v]) => [k, { label: v.label, defaultModel: v.defaultModel }]));
+  c.llm.providers = Object.fromEntries(Object.entries(PROVIDERS).map(([k, v]) => [k, { label: v.label, defaultModel: v.defaultModel, models: v.models }]));
   c.sources.boards.defaults = DEFAULT_BOARDS;
   c.coverLetter.defaultTemplates = Object.fromEntries(tracks().map((t) => [t.id, fs.readFileSync(templateFileFor(t.id), 'utf8')]));
   c.coverLetter.activeTemplates = Object.fromEntries(tracks().map((t) => [t.id, getTemplate(t.id)]));
@@ -50,7 +49,7 @@ export function startServer(actions) {
     const sent = count(`SELECT COUNT(*) n FROM emails WHERE status IN ('sent','replied','bounced')`);
     const replied = count(`SELECT COUNT(*) n FROM emails WHERE status = 'replied'`);
     res.json({
-      jobs: count('SELECT COUNT(*) n FROM jobs'),
+      jobs: count("SELECT COUNT(*) n FROM applications WHERE status != 'removed'"), // jobs you removed don't count as found
       byStatus,
       submitted: ['submitted', 'interview', 'offer', 'rejected'].reduce((n, s) => n + (byStatus[s] || 0), 0),
       pendingReview: byStatus.pending_approval || 0,
@@ -71,7 +70,7 @@ export function startServer(actions) {
       avgScore: db.prepare(`SELECT ROUND(AVG(match_score)) n FROM applications WHERE match_score IS NOT NULL`).get().n || 0,
       system: {
         llm: await llmAvailable(), llmProvider: config.llm.provider || 'ollama', llmModel: currentModel(),
-        gmail: gmailReady(), gmailUser: senderAddress(), google: googleStatus(), linkedin: linkedinStatus(),
+        gmail: gmailReady(), gmailUser: senderAddress(), gmailWeb: gmailWebStatus(), linkedin: linkedinStatus(),
         emailPaused: kv.get('emailPaused', false), worker: actions.status(), workers: actions.workers?.(), mode: config.mode, onboarded: config.onboarded,
         browser: config.apply.browser, lastRun: kv.get('lastRunAt', null), formWaiting: heldOpen(),
       },
@@ -81,7 +80,7 @@ export function startServer(actions) {
   app.get('/api/applications', (_req, res) => res.json(db.prepare(`
     SELECT j.id, j.title, j.company, j.location, j.ats, j.apply_url, j.linkedin_url, a.track, a.status, a.notes, a.applied_at, a.updated_at,
       a.resume_path, a.cover_letter_path, a.match_score, a.proof_path, (SELECT COUNT(*) FROM contacts c WHERE c.job_id = j.id) contacts
-    FROM jobs j JOIN applications a ON a.job_id = j.id ORDER BY a.updated_at DESC LIMIT 2000`).all()));
+    FROM jobs j JOIN applications a ON a.job_id = j.id WHERE a.status != 'removed' ORDER BY a.updated_at DESC LIMIT 2000`).all()));
 
   app.patch('/api/applications/:id', (req, res) => {
     db.prepare(`UPDATE applications SET status = ?, updated_at = datetime('now') WHERE job_id = ?`).run(req.body.status, req.params.id);
@@ -97,13 +96,51 @@ export function startServer(actions) {
     res.json(rows.map((r) => ({ ...r, analysis: JSON.parse(r.analysis || '{}'), contacts: contacts.all(r.id) })));
   });
 
+  // Approve what you checked. Everything else simply stays in Review batch; nothing is skipped unless you say so.
   app.post('/api/review/decide', (req, res) => {
     const { approve = [], skip = [], applyNow = true } = req.body;
     const set = db.prepare(`UPDATE applications SET status = ?, updated_at = datetime('now') WHERE job_id = ? AND status = 'pending_approval'`);
     db.transaction(() => { approve.forEach((id) => set.run('approved', id)); skip.forEach((id) => set.run('skipped', id)); })();
-    log('review', `Approved ${approve.length}, skipped ${skip.length}`);
+    log('review', `Approved ${approve.length}${skip.length ? `, skipped ${skip.length}` : ''}`);
     const started = applyNow && approve.length ? actions.apply() : false;
     res.json({ ok: true, started });
+  });
+
+  // Retry all: everything skipped, failed or stuck goes back in the queue (not ones waiting on your answer).
+  // Several at once from the Applications page: try again, mark as, or remove.
+  // Removed jobs stay in the database (hidden) so later searches recognise them and don't bring them back.
+  app.post('/api/applications/bulk', (req, res) => {
+    const ids = (req.body.ids || []).map(Number).filter(Boolean);
+    const { action, status } = req.body;
+    const upd = db.prepare(`UPDATE applications SET status = ?, notes = ?, updated_at = datetime('now') WHERE job_id = ?`);
+    let count = 0;
+    db.transaction(() => {
+      for (const id of ids) {
+        if (action === 'retry') {
+          if (db.prepare(`SELECT 1 FROM answer_waits w JOIN answers x ON x.id = w.answer_id WHERE w.job_id = ? AND x.answer = ''`).get(id)) continue; // still waiting on your answer
+          count += upd.run('approved', 'Retrying', id).changes;
+          db.prepare(`DELETE FROM tasks WHERE related_job_id = ? AND done = 0`).run(id);
+        } else if (action === 'status' && status) {
+          count += db.prepare(`UPDATE applications SET status = ?, applied_at = CASE WHEN ? = 'submitted' THEN COALESCE(applied_at, datetime('now')) ELSE applied_at END, updated_at = datetime('now') WHERE job_id = ?`).run(status, status, id).changes;
+        } else if (action === 'remove') {
+          count += upd.run('removed', 'Removed by you', id).changes;
+          db.prepare(`DELETE FROM tasks WHERE related_job_id = ?`).run(id);
+          db.prepare(`UPDATE emails SET status = 'cancelled' WHERE status = 'scheduled' AND contact_id IN (SELECT id FROM contacts WHERE job_id = ?)`).run(id);
+          db.prepare(`DELETE FROM answer_waits WHERE job_id = ?`).run(id);
+        }
+      }
+    })();
+    if (action === 'retry' && count) actions.apply();
+    res.json({ ok: true, count });
+  });
+
+  app.post('/api/applications/retry-all', (_req, res) => {
+    const rows = db.prepare(`SELECT a.job_id FROM applications a WHERE a.status IN ('skipped','failed','needs_review','prepared')
+      AND NOT EXISTS (SELECT 1 FROM answer_waits w JOIN answers x ON x.id = w.answer_id WHERE w.job_id = a.job_id AND x.answer = '')`).all();
+    const upd = db.prepare(`UPDATE applications SET status = 'approved', notes = 'Retrying', updated_at = datetime('now') WHERE job_id = ?`);
+    db.transaction(() => rows.forEach((r) => { upd.run(r.job_id); db.prepare(`DELETE FROM tasks WHERE related_job_id = ? AND (title LIKE 'Finish application%' OR title LIKE 'Apply yourself%')`).run(r.job_id); }))();
+    log('apply', `Retrying ${rows.length} applications`);
+    res.json({ count: rows.length, started: rows.length ? actions.apply() : false });
   });
 
   app.put('/api/applications/:id/letter', async (req, res) => {
@@ -161,9 +198,10 @@ export function startServer(actions) {
 
   // ---------- Runs ----------
   app.post('/api/run', (req, res) => res.json({ started: actions.run(req.body || {}) }));
+  app.post('/api/stop', (req, res) => res.json({ stopped: actions.stop(req.body?.worker === 'apply' ? 'apply' : 'find') }));
 
   // ---------- Settings ----------
-  app.get('/api/settings', (_req, res) => res.json({ settings: publicSettings(), suggested: SUGGESTED }));
+  app.get('/api/settings', async (_req, res) => { const settings = publicSettings(); settings.llm.installed = await installedOllamaModels(); res.json({ settings, suggested: SUGGESTED }); });
   app.put('/api/settings', (req, res) => {
     const patch = req.body || {};
     if (patch.email?.hunterApiKey?.startsWith('••••')) delete patch.email.hunterApiKey;
@@ -190,6 +228,15 @@ export function startServer(actions) {
   });
   app.delete('/api/integrations/gmail', (_req, res) => { saveEnv({ GMAIL_USER: '', GMAIL_APP_PASSWORD: '' }); resetTransport(); res.json({ ok: true }); });
 
+  // Gmail signed in inside Joblin's browser: only for reading security codes, no app password needed.
+  app.post('/api/integrations/gmail-web/connect', (_req, res) => {
+    const w = actions.workers?.() || {};
+    if (w.find?.state || w.apply?.state || heldOpen()) return sendErr(res, new Error('Joblin is busy — stop the search or applications first, then connect.'), 409);
+    connectGmailWeb().catch((e) => log('error', `gmail: ${e.message}`));
+    res.json({ ok: true, message: 'A Google window opened — sign in to Gmail there.' });
+  });
+  app.post('/api/integrations/gmail-web/disconnect', async (_req, res) => { await disconnectGmailWeb(); res.json({ ok: true }); });
+
   app.post('/api/integrations/linkedin/connect', (_req, res) => {
     if (isBrowserBusy() || actions.status().state) return sendErr(res, new Error('Joblin is busy — try again when the current run finishes.'), 409);
     connectLinkedIn().catch((e) => log('error', `linkedin: ${e.message}`));
@@ -207,6 +254,12 @@ export function startServer(actions) {
     const r = getResume(t);
     res.json({ resume: r, quality: parseQuality(r), file: config.resumes?.[t] || {}, own: hasOwnResume(t), label: trackLabel(t) });
   });
+  app.get('/api/resumes/:track/usage', (req, res) => {
+    if (!tracks().some((x) => x.id === req.params.track)) return res.status(404).end();
+    try { res.json(resumeUsage(req.params.track)); } catch (e) { sendErr(res, e); }
+  });
+  // Every role across all your resumes, for Profile → Work history.
+  app.get('/api/positions', (_req, res) => res.json(allPositions().map(({ bullets, ...p }) => ({ ...p, bullets: bullets.length }))));
   app.post('/api/resumes/:track/upload', express.raw({ type: '*/*', limit: '15mb' }), async (req, res) => {
     const t = req.params.track;
     if (!tracks().some((x) => x.id === t)) return res.status(404).end();
@@ -219,11 +272,6 @@ export function startServer(actions) {
     try { res.json({ path: await renderResumePreview(req.params.track) }); } catch (e) { sendErr(res, e); }
   });
 
-  // ---------- Google sign-in (Gmail) ----------
-  app.post('/api/integrations/google/start', async (_req, res) => {
-    try { res.json({ url: await startGoogleAuth() }); } catch (e) { sendErr(res, e); }
-  });
-  app.delete('/api/integrations/google', (_req, res) => { disconnectGoogle(); res.json({ ok: true }); });
 
   // ---------- AI model ----------
   app.post('/api/llm/test', async (_req, res) => { try { res.json(await testModel()); } catch (e) { sendErr(res, e); } });

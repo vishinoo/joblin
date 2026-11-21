@@ -3,13 +3,14 @@
   "version": "1.0.0",
   "main": "start.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node --test tests/",
     "start": "node start.js",
     "login": "node start.js login",
     "run": "node start.js run",
     "dry": "node start.js run --dry",
     "background": "node start.js --no-window",
-    "update": "git pull --ff-only --autostash origin main && npm install --no-audit --no-fund"
+    "update": "git pull --ff-only --autostash origin main && npm install --no-audit --no-fund",
+    "check": "node scripts/check.mjs"
   },
   "keywords": [],
   "author": "",

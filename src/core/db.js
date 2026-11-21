@@ -1,10 +1,10 @@
 import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
-import { ROOT } from './config.js';
+import { paths } from './config.js';
 
-fs.mkdirSync(path.join(ROOT, 'data'), { recursive: true });
-export const db = new Database(path.join(ROOT, 'data', 'jobert.db'));
+fs.mkdirSync(paths.data, { recursive: true });
+export const db = new Database(path.join(paths.data, 'jobert.db'));
 db.pragma('journal_mode = WAL');
 
 db.exec(`

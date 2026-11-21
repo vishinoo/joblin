@@ -3,11 +3,19 @@
 import { config } from './config.js';
 
 export const PROVIDERS = {
-  ollama: { label: 'Ollama (local, free)', key: null, defaultModel: 'qwen2.5:3b' },
-  anthropic: { label: 'Claude', key: 'ANTHROPIC_API_KEY', defaultModel: 'claude-haiku-5-5' },
-  openai: { label: 'OpenAI', key: 'OPENAI_API_KEY', defaultModel: 'gpt-4.1-mini' },
-  gemini: { label: 'Gemini', key: 'GEMINI_API_KEY', defaultModel: 'gemini-2.5-flash' },
+  ollama: { label: 'Ollama (local, free)', key: null, defaultModel: 'qwen2.5:3b',
+    models: [['qwen2.5:3b', 'Qwen 2.5 3B — fast, runs on 8 GB'], ['qwen2.5:7b', 'Qwen 2.5 7B — better writing, needs ~8 GB free'], ['llama3.2:3b', 'Llama 3.2 3B — fast'], ['llama3.1:8b', 'Llama 3.1 8B — better writing'], ['gemma2:9b', 'Gemma 2 9B — strong, needs 16 GB']] },
+  anthropic: { label: 'Claude', key: 'ANTHROPIC_API_KEY', defaultModel: 'claude-haiku-5-5',
+    models: [['claude-haiku-5-5', 'Claude Haiku 5.5 — fast and cheap'], ['claude-sonnet-5-5', 'Claude Sonnet 5.5 — best balance'], ['claude-opus-5-5', 'Claude Opus 5.5 — highest quality']] },
+  openai: { label: 'OpenAI', key: 'OPENAI_API_KEY', defaultModel: 'gpt-4.1-mini',
+    models: [['gpt-4.1-mini', 'GPT-4.1 mini — fast and cheap'], ['gpt-4.1', 'GPT-4.1 — higher quality'], ['gpt-4o-mini', 'GPT-4o mini — cheapest']] },
+  gemini: { label: 'Gemini', key: 'GEMINI_API_KEY', defaultModel: 'gemini-2.5-flash',
+    models: [['gemini-2.5-flash', 'Gemini 2.5 Flash — fast, has a free tier'], ['gemini-2.5-flash-lite', 'Gemini 2.5 Flash-Lite — cheapest'], ['gemini-2.5-pro', 'Gemini 2.5 Pro — highest quality']] },
 };
+// Models already installed in Ollama on this Mac.
+export async function installedOllamaModels() {
+  try { const r = await fetch(`${config.llm.host}/api/tags`, { signal: AbortSignal.timeout(3000) }); return (await r.json()).models.map((m) => m.name); } catch { return []; }
+}
 const provider = () => (PROVIDERS[config.llm.provider] ? config.llm.provider : 'ollama');
 export const currentModel = () => (provider() === 'ollama' ? config.llm.model : config.llm.models?.[provider()] || PROVIDERS[provider()].defaultModel);
 export const usage = { calls: 0, inTok: 0, outTok: 0 };

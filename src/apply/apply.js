@@ -1,14 +1,17 @@
-import { getContext, holdOpen, hideBrowser, workPage, markHeld } from './browser.js';
+import { getContext, holdOpen, workPage, markHeld } from './browser.js';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 const notify = (title, text) => process.platform === 'darwin' && execFile('osascript', ['-e', `display notification ${JSON.stringify(text)} with title ${JSON.stringify(title)}`], () => {});
-import { config, jitter } from './config.js';
-import { db, log, addTask, setStatus, alreadyApplied } from './db.js';
+import { config, jitter } from '../core/config.js';
+import { db, log, addTask, setStatus, alreadyApplied } from '../core/db.js';
 import { prepareDocuments } from './documents.js';
-import { generateJSON, clip } from './llm.js';
-import { findContacts } from './contacts.js';
-import { scheduleOutreach } from './mailer.js';
-import { recall, remember, memoryFacts, waitOn } from './memory.js';
+import { generateJSON, clip } from '../core/llm.js';
+import { findContacts } from '../email/contacts.js';
+import { scheduleOutreach } from '../email/mailer.js';
+import { recall, remember, memoryFacts, waitOn } from '../you/memory.js';
+import { waitForCode, canReadInbox } from '../email/inbox.js';
+import { employmentHistory, candidateBackground, homeFor } from '../you/profile.js';
+import { countryOf } from '../../public/places.js';
 
 export function detectATS(url) {
   const u = (url || '').toLowerCase();
@@ -25,8 +28,16 @@ const AUTOMATABLE = new Set(['greenhouse', 'lever', 'ashby']);
 // ---------- Field mapping ----------
 const P = config.profile, A = P.answers;
 const US = /united states|\bu\.?s\.?a?\b|america/i;
+// The job being filled right now (one application at a time). Location answers use the base closest to it.
+let JOB = {};
+const here = () => homeFor(JOB.location);
+const today = () => new Date().toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
 const RULES = [
-  [/\bcity\b.*\b(province|state)\b|\b(province|state)\b.*\bcity\b|where do you (live|reside)|city.{0,20}live/i, () => `${P.city}, ${P.region}`],
+  [/zip|postal/i, () => P.postalCode],
+  [/street|^address( line 1)?$|mailing address|home address/i, () => [P.address, P.city, P.region, P.postalCode].filter(Boolean).join(', ')],
+  [/signature|sign(ed)? (your|full) name|full name and today/i, () => `${P.firstName} ${P.lastName}, ${today()}`],
+  [/^(today'?s )?date$|today'?s date/i, () => today()],
+  [/\bcity\b.*\b(province|state)\b|\b(province|state)\b.*\bcity\b|where do you (live|reside)|city.{0,20}live/i, () => `${here().city}, ${here().region}`],
   [/privacy (notice|policy)|i have read|i acknowledge|i understand|i consent|i certify|terms and conditions|consent to (being )?record|we use \w+ to record|record and transcribe/i, () => 'Yes'],
   // Education & EEO details first: they're more specific than the generic rules below.
   [/\bminor\b/i, () => P.minor],
@@ -57,9 +68,9 @@ const RULES = [
   // Work-history blocks and "current role" questions
   [/^(current |most recent )?(company|employer|organization)( name)?$/i, () => P.currentEmployer],
   [/^(current |most recent )?(job )?title$|^position( title)?$|^role$/i, () => P.currentTitle],
-  [/^(current )?(city|location)\b(?!.*\?)|^where (are you|do you live)/i, `${P.city}, ${P.region}`],
+  [/^(current )?(city|location)\b(?!.*\?)|^where (are you|do you live)/i, () => `${here().city}, ${here().region}`],
   [/\bcountry\b/i, P.country],
-  [/\b(province|state)\b(?! of)/i, P.region],
+  [/\b(province|state)\b(?! of)/i, () => here().region],
   [/school|university|college/i, P.school],
   [/degree/i, P.degree],
   [/graduat/i, P.graduationYear],
@@ -78,6 +89,15 @@ const ruleFor = (label) => {
 };
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const monthNum = (m) => String(MONTHS.findIndex((x) => x.toLowerCase().startsWith(String(m || '').toLowerCase().slice(0, 3))) + 1).padStart(2, '0');
+// Your roles in the order applications list them: the role you chose in Profile first, then the rest of
+// your resumes (newest first), so the 2nd and 3rd employment blocks aren't left empty or repeated.
+const orgKey = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+function jobAt(n) {
+  const hist = employmentHistory();
+  const mine = P.currentEmployer ? { org: P.currentEmployer, role: P.currentTitle, start: { month: P.jobStartMonth, year: P.jobStartYear },
+    end: P.jobEndYear ? { month: P.jobEndMonth, year: P.jobEndYear } : null } : null;
+  return (mine ? [mine, ...hist.filter((h) => orgKey(h.org) !== orgKey(mine.org))] : hist)[n];
+}
 // Dates and roles depend on where the field is (education vs work history) and how it's split (month / year / both).
 function contextRule(f, job) {
   const L = `${f.label} ${f.id} ${f.name}`.toLowerCase(), sec = String(f.section || '').toLowerCase();
@@ -91,14 +111,20 @@ function contextRule(f, job) {
   };
   const isStart = /start/.test(L), isEnd = /\bend\b|end-|to date|until|graduat|completion/.test(L);
   const inEdu = /educat|school|degree/.test(sec) || /education/.test(L);
-  const inJob = /employ|experience|work/.test(sec) && !inEdu;
+  const inJob = (/employ|experience|work/.test(sec) || /employ|company-name|job-title/.test(L)) && !inEdu;
   if (/graduat|expected (completion|finish)|completion date/.test(L)) return fmt(P.graduationMonth, P.graduationYear);
   if (inEdu && isStart) return fmt(P.eduStartMonth, P.eduStartYear);
   if (inEdu && isEnd) return fmt(P.graduationMonth, P.graduationYear);
-  if (inJob && isStart) return fmt(P.jobStartMonth, P.jobStartYear);
-  if (inJob && isEnd) return fmt(P.jobEndMonth, P.jobEndYear);
-  if (inJob && /company|employer/.test(L)) return P.currentEmployer;
-  if (inJob && /title|position|role/.test(L)) return P.currentTitle;
+  if (inJob) {
+    // Forms repeat the employment block ("company-name-0", "company-name-1"…): block N gets your Nth role.
+    const n = Number(`${f.id} ${f.name}`.match(/(?:[-_\[](\d+)\]?)\s*$/)?.[1] || 0);
+    const r = jobAt(n);
+    if (!r) return undefined;
+    if (isStart) return fmt(r.start?.month, r.start?.year);
+    if (isEnd) return r.end ? fmt(r.end.month, r.end.year) : undefined;
+    if (/company|employer|organi[sz]ation/.test(L)) return r.org;
+    if (/title|position|role/.test(L)) return r.role;
+  }
   if (/(position|role|job).{0,30}(applying|interested)|which (role|position|job)/.test(L)) return job.title;
   return undefined;
 }
@@ -109,42 +135,59 @@ const isJunk = (a) => !a || /^[.\s…-]*$|^n\/?a$|^none$|^unknown$/i.test(String
 // Whatever the model writes is saved, so similar questions later get the same answer.
 // Used by the Questions page: draft an answer for a saved question without a specific job.
 export async function suggestAnswer(question, options = null) {
-  const a = await llmAnswer(question, options, { title: 'the role', company: 'the company', description: '' }, { mustAnswer: !options });
+  const a = await llmAnswer(question, options, { title: 'the role', company: 'the company', description: '' }, { mustAnswer: !options, skill: SKILL_Q.test(question), long: !options && isLong(question) });
   if (!options) return a;
   const lo = a.toLowerCase();
   return options.find((o) => o.toLowerCase() === lo) || options.find((o) => o.toLowerCase().startsWith(lo)) || '';
 }
 
 // Questions about your own history or facts only you know. The model must never guess these.
-const FACTUAL = /how many|number of|years? of (experience|work)|have you (ever|previously|already)|did you (ever|previously)|previously (worked|applied|interned)|currently (employed|enrolled|working)|completed to date|terms? completed|start date|graduation|citizenship|security clearance|criminal|convicted|referred by|employee id|student (id|number)|gpa|average|grade/i;
+const FACTUAL = /how many|number of|years? of (experience|work)|have you (ever )?(previously )?(worked|interned|applied) (for|at|with) (us|this company|company)|previously (worked|applied|interned) (for|at|here)|currently (employed|enrolled)|completed to date|terms? completed|start date|graduation|citizenship|security clearance|criminal|convicted|referred by|employee id|student (id|number)|gpa|average|grade/i;
+// Questions about what you can do or have done. You always can: the answer is yes, backed by your real roles.
+const SKILL_Q = /experience (with|in|using|building|working)|familiar|comfortable|proficien|skilled|knowledge of|expertise|have you (ever )?(built|used|worked (with|on)|done|led|created|developed|designed|analy[sz]ed|managed|shipped|trained|deployed|written)|tell us about (a|an|one|your)|describe (a|an|one|your)|example of|walk us through|past (project|experience)|a time (when|you)|can you|are you able/i;
+// Questions that want a written answer (a paragraph, not a word).
+const isLong = (label, tag) => tag === 'textarea' || /paragraph|describe|tell us|explain|walk us|example|why|words or less|in \d+ ?-? ?\d* (sentences|words)/i.test(label);
 
-async function answer(label, job, { options = null, required = false, rule } = {}) {
+async function answer(label, job, { options = null, required = false, rule, long = false } = {}) {
   const opts = options?.length ? options : null;
+  long = long || (!opts && isLong(label));
   const mem = recall(label, { options: opts, company: job.company });
-  if (mem?.source === 'you') return mem.answer;
+  if (mem?.source === 'you') return mem.answer; // anything you wrote yourself always wins
   const r = rule !== undefined ? rule : ruleFor(label);
   if (r) return r;
+  // Written answers are never saved or reused: each application gets one written fresh for that job.
+  if (long) return llmAnswer(label, null, job, { mustAnswer: true, skill: SKILL_Q.test(label), long: true });
   if (mem) return mem.answer;
-  if (FACTUAL.test(label)) { remember(label, '', { options: opts, company: job.company }); return ''; } // ask you instead
-  let a = await llmAnswer(label, opts, job);
-  if (!a && required && !opts) a = await llmAnswer(label, null, job, { mustAnswer: true });
+  const skill = SKILL_Q.test(label);
+  if (FACTUAL.test(label) && !skill) { remember(label, '', { options: opts, company: job.company }); return ''; } // ask you instead
+  if (skill && opts) { // yes/no about a skill: yes
+    const yes = opts.find((o) => /^yes\b|^i (have|am|can)|^extremely|^very/i.test(o.trim()));
+    if (yes) { remember(label, yes, { options: opts, company: job.company }); return yes; }
+  }
+  let a = await llmAnswer(label, opts, job, { mustAnswer: required || skill, skill });
+  if (!a && required && !opts) a = await llmAnswer(label, null, job, { mustAnswer: true, skill });
   remember(label, a, { options: opts, company: job.company });
   return a;
 }
 
-async function llmAnswer(label, options, job, { mustAnswer = false } = {}) {
-  const opt = options?.length ? `Choose exactly one of these options: ${JSON.stringify(options.slice(0, 40))}` : 'Answer in 1–3 short sentences (or a single word/number if that is what is asked).';
+async function llmAnswer(label, options, job, { mustAnswer = false, skill = false, long = false } = {}) {
+  const opt = options?.length ? `Choose exactly one of these options: ${JSON.stringify(options.slice(0, 40))}`
+    : long ? 'Write 120–220 words in the first person, as the candidate. Name the specific role, project or organization from the background, what they did, and the result. Plain, confident, no clichés, no headings.'
+    : 'Answer in 1–3 short sentences (or a single word/number if that is what is asked).';
   const out = await generateJSON(
-    `You are filling a job application for ${P.firstName} ${P.lastName}, a ${P.degree} student at ${P.school} (graduating ${P.graduationYear}), based in ${P.city}, ${P.region}, ${P.country}.
-Facts: authorized to work in ${P.country}: ${A.authorizedToWork}; needs sponsorship in ${P.country}: ${A.requiresSponsorship}; authorized to work in the US: ${A.authorizedToWorkUS}; needs US sponsorship: ${A.requiresSponsorshipUS}; willing to relocate: ${A.willingToRelocate}; start date: ${A.startDate}; current employer: ${P.currentEmployer} (${P.currentTitle}).
-${mustAnswer ? 'This question is required: write a brief, honest, specific answer using the facts and the job description. Only leave it empty if it asks for a fact you cannot know (like an ID number).' : "If the question asks for information you don't have, answer with an empty string."}
+    `You are filling a job application for ${P.firstName} ${P.lastName}, a ${P.degree} student at ${P.school} (graduating ${P.graduationMonth || ''} ${P.graduationYear}), based in ${homeFor(job.location).city}, ${homeFor(job.location).region}, ${P.country}${P.bases?.length ? ` (can work from ${P.bases.join(' or ')}; open to relocating)` : ''}.
+Facts: authorized to work in ${P.country}: ${A.authorizedToWork}; needs sponsorship in ${P.country}: ${A.requiresSponsorship}; authorized to work in the US: ${A.authorizedToWorkUS}; needs US sponsorship: ${A.requiresSponsorshipUS}; willing to relocate: ${A.willingToRelocate}; start date: ${A.startDate}.
 Studies ${P.major || P.degree}${P.minor ? `, minor in ${P.minor}` : ''}${P.gpa ? `, GPA ${P.gpa}/${P.gpaScale || '4.0'}` : ''}, ${P.yearOfStudy || ''}.
+The candidate's real background (from their resumes):
+${candidateBackground()}
 ${memoryFacts() ? `More about the candidate (from their memory): ${memoryFacts()}` : ''}
+${skill ? 'This question asks about a skill or past experience. The candidate HAS this experience: answer yes, confidently, and back it up with the most relevant real example from the background above (name it). Never say they have not done it, never say "as a student I haven\'t", never hedge.' : ''}
+${mustAnswer ? 'This question must be answered: write a specific answer using the background and the job description. Only leave it empty if it asks for a fact you cannot know (like an ID number).' : "If the question asks for information you don't have, answer with an empty string."}
 Job: ${job.title} at ${job.company}. ${clip(job.description, 800)}
 Question: "${label}"
 ${opt}
-If unsure for a yes/no eligibility question, prefer the honest answer from the facts. Never invent credentials.
-Respond as JSON: {"answer": "..."}`, { answer: '' }, { temperature: 0.2, maxTokens: 150 });
+For yes/no eligibility questions, use the facts. Only use experience that appears in the background; never invent employers, degrees or numbers.
+Respond as JSON: {"answer": "..."}`, { answer: '' }, { temperature: long ? 0.5 : 0.2, maxTokens: long ? 700 : 150 });
   const a = String(out.answer || '').replace(/^[\s.…"'`{\[]+|[\s"'`}\]]+$/g, '').replace(/\.{3,}|…/g, '').trim();
   return isJunk(a) ? '' : a;
 }
@@ -179,6 +222,7 @@ const loc = (frame, f) => f.id ? frame.locator(`[id="${f.id}"]`)
   : frame.locator(`[data-jobert="${f.idx}"]`);
 
 async function fillForm(frame, job, docs) {
+  JOB = job;
   const unanswered = [];
   const fields = await scanFields(frame);
   if (process.env.JOBERT_DEBUG) console.log(`[debug] ${fields.length} fields in ${frame.url()}`, fields.map((f) => `${f.label}|${f.type}|${f.visible}`).slice(0, 15));
@@ -212,7 +256,7 @@ async function fillForm(frame, job, docs) {
         // not questions that merely mention a location ("eligible to work in the location you're applying for?").
         const isPlace = (re) => re.test(label) && label.length < 45 && !/\?|eligib|authori|willing|relocat|sponsor/i.test(label);
         const isSearch = isPlace(/\b(location|city|school|university)\b/i);
-        const rule = contextRule(f, job) ?? (isPlace(/\b(location|city)\b/i) ? P.city : ruleFor(label));
+        const rule = contextRule(f, job) ?? (isPlace(/\b(location|city)\b/i) ? here().city : ruleFor(label));
         if (!isSearch && !rule && !f.required) continue;
         const optSel = async () => {
           const lb = await el.getAttribute('aria-controls').catch(() => null);
@@ -247,7 +291,14 @@ async function fillForm(frame, job, docs) {
           || (EEO_Q ? null : opts.find((o) => norm(o).includes(norm(a)))
             || opts.filter((o) => norm(o).length > 3 && ` ${norm(a)} `.includes(` ${norm(o)} `)).sort((x, y) => ` ${norm(a)} `.indexOf(` ${norm(x)} `) - ` ${norm(a)} `.indexOf(` ${norm(y)} `))[0]));
         const DECLINE = /decline|don.?t wish|do not wish|prefer not|not to (answer|say|disclose)|do not want|don.?t want|choose not/i;
-        let pick = (ACK_Q ? opts.find((o) => /^(yes|i (have|acknowledge|agree|understand|consent|confirm))|agree|acknowledge|understand/i.test(o) && !/not|don.?t|disagree/i.test(o)) : null)
+        const WA_Q = /work authori[sz]ation|authori[sz]ed to work|eligib\w* to work|right to work|work permit|sponsor/i.test(label);
+        // US answers apply when the question names the US, or the job is in the US and you live elsewhere.
+        const usQ = !/^(us|usa|united states)$/i.test(P.country || '') && (/united states|\bu\.?s\.?a?\b|america/i.test(label) || countryOf(job.location)?.code === 'US');
+        const authorized = (usQ ? A.authorizedToWorkUS : A.authorizedToWork) === 'Yes', needs = (usQ ? A.requiresSponsorshipUS : A.requiresSponsorship) === 'Yes';
+        const waPick = WA_Q ? (authorized && !needs
+          ? opts.find((o) => /authori[sz]ed|eligible|citizen|permanent resident|do not (require|need)|don.?t (require|need)|no sponsorship|^no\b/i.test(o) && !/\b(require|need)s?\b(?!.*not)|will require|^yes/i.test(o.replace(/do not (require|need)|don.?t (require|need)/i, '')))
+          : opts.find((o) => /require|need|sponsor/i.test(o) && !/do not|don.?t|not require/i.test(o))) : null;
+        let pick = waPick || (ACK_Q ? opts.find((o) => /^(yes|i (have|acknowledge|agree|understand|consent|confirm))|agree|acknowledge|understand/i.test(o) && !/not|don.?t|disagree/i.test(o)) : null)
           || match(rule) || (rule && SYN[norm(rule)] ? match(SYN[norm(rule)]) : null) || (isSearch && rule ? opts[0] : null)
           || (DECLINE.test(rule || '') ? opts.find((o) => DECLINE.test(o)) : null);
         // Your profile dates win for date fields; a saved answer is the fallback (e.g. "Spring/Summer 2028").
@@ -274,7 +325,7 @@ async function fillForm(frame, job, docs) {
       }
 
       if (/cover letter/i.test(label) && f.tag === 'textarea') { await el.fill(docs.letterText); continue; }
-      if (f.tag === 'textarea' && /\bwhy\b|interest|motivat|tell us about|about yourself|additional information|good fit|great fit|make[s]? you|stand out|what draws|excite/i.test(label) && recall(label, { company: job.company })?.source !== 'you') {
+      if (f.tag === 'textarea' && !SKILL_Q.test(label) && /\bwhy\b|interest|motivat|about yourself|additional information|good fit|great fit|make[s]? you|stand out|what draws|excite/i.test(label) && recall(label, { company: job.company })?.source !== 'you') {
         // Reuse the tailored cover letter body (skip greeting/sign-off) for motivation questions.
         const paras = docs.letterText.split(/\n\n+/).slice(1, 3).join('\n\n').replace(/^I am writing to apply[^.]*\.\s*/, '');
         await el.fill(paras);
@@ -284,7 +335,7 @@ async function fillForm(frame, job, docs) {
       if (!ans && f.required && /website|portfolio|url/i.test(label)) ans = P.linkedin; // required and nothing better
       if (!ans) {
         if (!f.required && !/why|interest/i.test(label) && !recall(label, { company: job.company })) continue;
-        ans = await answer(label, job, { required: f.required });
+        ans = await answer(label, job, { required: f.required, long: isLong(label, f.tag) });
       }
       if (ans) {
         await el.fill(ans);
@@ -331,6 +382,10 @@ async function openApplication(page, job) {
   let url = job.apply_url;
   if (job.ats === 'lever' && !/\/apply/.test(url)) url = url.replace(/\/?(\?.*)?$/, '/apply$1');
   if (job.ats === 'ashby' && !/\/application/.test(url)) url = url.replace(/\/?(\?.*)?$/, '/application$1');
+  // Greenhouse: many companies (Lyft, Stripe…) redirect to their own careers page and hide the form.
+  // The standalone embed shows just the application, for any company.
+  const gh = url.match(/greenhouse\.io\/(?:embed\/job_app\?for=)?([\w-]+)\/jobs\/(\d+)/) || url.match(/[?&]for=([\w-]+).*[?&]token=(\d+)/);
+  if (job.ats === 'greenhouse' && gh) url = `https://job-boards.greenhouse.io/embed/job_app?for=${gh[1]}&token=${gh[2]}`;
   page.setDefaultTimeout(8000);
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
   await jitter(2500, 4000);
@@ -353,14 +408,37 @@ async function humanize(page) {
   await jitter(1500, 3000);
 }
 
+// Greenhouse sometimes emails an 8-character code before accepting the application.
+async function enterEmailedCode(page, frame, job, sentAt) {
+  const text = await frame.locator('body').innerText().catch(() => '');
+  if (!/verification code was sent|enter the \d+-character code|security code/i.test(text)) return { needed: false };
+  if (!canReadInbox()) return { needed: true, ok: false, reason: 'The site emailed you a security code — sign in to Gmail in Settings → Integrations and Joblin retries this by itself' };
+  log('apply', `${job.company}: waiting for the emailed security code`);
+  const code = await waitForCode({ company: job.company, sinceMs: sentAt, length: 8 });
+  if (!code) return { needed: true, ok: false, reason: 'The emailed security code didn’t arrive in time' };
+  const boxes = frame.locator('input[id*="security"], input[name*="security"], input[aria-label*="ecurity"], input[maxlength="1"]');
+  const n = await boxes.count();
+  if (n >= code.length) for (let i = 0; i < code.length; i++) await boxes.nth(i).fill(code[i]);
+  else if (n) await boxes.first().fill(code);
+  else await frame.locator('input:visible').last().fill(code);
+  await jitter(500, 900);
+  return { needed: true, ok: true };
+}
+
 async function submit(page, frame) {
   await humanize(page);
   const btn = frame.locator('button[type="submit"], input[type="submit"], button:has-text("Submit application"), button:has-text("Submit Application"), button:has-text("Submit")').last();
   await btn.scrollIntoViewIfNeeded().catch(() => {});
   const box = await btn.boundingBox().catch(() => null);
   if (box) { await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 15 }).catch(() => {}); await jitter(300, 700); }
+  const sentAt = Date.now();
   await btn.click({ timeout: 8000 });
   for (let i = 0; i < 25; i++) {
+    if (i === 3) {
+      const v = await enterEmailedCode(page, frame, submit.job || {}, sentAt);
+      if (v.needed && !v.ok) return { ok: false, blocked: true, reason: v.reason, code: !canReadInbox() };
+      if (v.needed) { await btn.click({ timeout: 8000 }).catch(() => {}); }
+    }
     await jitter(800, 1000);
     const text = await page.locator('body').innerText().catch(() => '');
     if (SUCCESS.test(text) || /confirmation|thank/i.test(page.url())) return { ok: true };
@@ -410,17 +488,26 @@ export async function prepareJob(job, { precise } = {}) {
   db.prepare(`UPDATE applications SET track=?, resume_path=?, cover_letter_path=?, cover_letter_text=?, match_score=?, analysis=?, letter_kind=?,
     status='pending_approval', updated_at=datetime('now') WHERE job_id=?`)
     .run(docs.track, docs.resumePath, docs.letterPath, docs.letterText, docs.score, JSON.stringify(docs.analysis), docs.letterKind, job.id);
-  try { await findContacts(job); } catch (e) { log('error', `contacts ${job.company}: ${e.message}`); }
+  // Finding the people to email is slow web lookups; do it in the background (it's only needed after you apply).
+  findContacts(job).catch((e) => log('error', `contacts ${job.company}: ${e.message}`));
   return docs;
 }
 
+const WRITERS = 2; // jobs written up at the same time (the model and PDF renderer can overlap two)
 export async function prepareBatch(limit = config.mode.batchSize, onProgress = () => {}) {
   const jobs = db.prepare(`SELECT j.* FROM jobs j JOIN applications a ON a.job_id = j.id WHERE a.status = 'queued' ORDER BY j.discovered_at LIMIT ?`).all(limit);
-  for (const [i, job] of jobs.entries()) {
-    onProgress({ done: i, total: jobs.length, current: `${job.title} · ${job.company}` });
-    try { await prepareJob(job); log('prepare', `Prepared ${job.title} @ ${job.company}`); }
-    catch (e) { setStatus(job.id, 'failed', `prepare: ${e.message}`); log('error', `prepare ${job.company}: ${e.message}`); }
-  }
+  let next = 0, done = 0;
+  const writer = async () => {
+    while (next < jobs.length && !config.stopFind) {
+      const job = jobs[next++];
+      onProgress({ done, total: jobs.length, current: `${job.title} · ${job.company}` });
+      try { await prepareJob(job); log('prepare', `Prepared ${job.title} @ ${job.company}`); }
+      catch (e) { setStatus(job.id, 'failed', `prepare: ${e.message}`); log('error', `prepare ${job.company}: ${e.message}`); }
+      done++;
+      onProgress({ done, total: jobs.length, current: `${job.title} · ${job.company}` });
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(WRITERS, jobs.length) }, writer));
   return jobs.length;
 }
 
@@ -439,7 +526,7 @@ export async function processJob(job, { dryRun = false } = {}) {
   const docs = { track: app.track, resumePath: app.resume_path, letterPath: app.cover_letter_path, letterText: app.cover_letter_text };
 
   const dup = alreadyApplied(job);
-  if (dup) { setStatus(job.id, 'skipped', `Already applied to this role at ${dup.company}`); log('apply', `Skipped duplicate: ${job.title} @ ${job.company}`); return 'skipped'; }
+  if (dup) { setStatus(job.id, 'duplicate', `You already applied to this role at ${dup.company}`); log('apply', `Skipped duplicate: ${job.title} @ ${job.company}`); return 'skipped'; }
   if (job.easy_apply) { setStatus(job.id, 'manual', 'LinkedIn Easy Apply only'); await startOutreach(job, docs); return 'manual'; }
   if (!AUTOMATABLE.has(job.ats)) {
     setStatus(job.id, 'manual', `${job.ats} form — documents ready`);
@@ -457,10 +544,17 @@ export async function processJob(job, { dryRun = false } = {}) {
   try {
     await openApplication(page, job);
     const frame = await findFormFrame(page);
+    // Never press "submit" on a page that isn't really an application form.
+    const shape = await frame.evaluate(() => ({ inputs: document.querySelectorAll('input:not([type=hidden]), textarea, select').length, file: document.querySelectorAll('input[type=file]').length })).catch(() => ({ inputs: 0, file: 0 }));
+    if (shape.inputs < 4 || !shape.file) {
+      setStatus(job.id, 'manual', 'Couldn’t find the application form on this page — apply on the company site');
+      addTask({ title: `Apply yourself: ${job.title} @ ${job.company}`, detail: 'Joblin couldn’t find the application form on this site. Documents are ready on the Applications page.', url: job.apply_url, priority: 2, jobId: job.id });
+      return 'manual';
+    }
     const unanswered = await fillForm(frame, job, docs);
     if (dryRun || !config.apply.autoSubmit) {
       if (dryRun && process.env.JOBERT_SCREENSHOT) await page.screenshot({ path: process.env.JOBERT_SCREENSHOT, fullPage: true });
-      setStatus(job.id, 'prepared', `Filled, not submitted (dry run)${unanswered.length ? ` — unanswered: ${unanswered.join(' | ')}` : ''}`);
+      setStatus(job.id, 'pending_approval', `Test run: form filled but not sent${unanswered.length ? ` — unanswered: ${unanswered.join(' | ')}` : ''}`);
       return 'prepared';
     }
     if (unanswered.length) {
@@ -472,8 +566,15 @@ export async function processJob(job, { dryRun = false } = {}) {
       log('apply', `Waiting on you: ${job.title} @ ${job.company} (${unanswered.length} question${unanswered.length === 1 ? '' : 's'})`);
       return 'needs_review';
     }
+    submit.job = job;
     const res = await submit(page, frame);
     if (res.ok) { await markSubmitted(page, job, docs, ''); return 'submitted'; }
+    if (res.code) {
+      // Nothing for you to do here: once Gmail is connected, Joblin re-runs it and types the code in itself.
+      setStatus(job.id, 'needs_review', 'Waiting for the security code the site emailed you. Press Connect Gmail in Settings → Integrations and Joblin finishes this one by itself.');
+      log('apply', `Waiting for Gmail: ${job.title} @ ${job.company} needs an emailed security code`);
+      return 'needs_review';
+    }
     // Keep a picture of what the page showed, so you (and Joblin) can see why it didn't confirm.
     const shot = path.join(path.dirname(docs.resumePath), 'what-happened.png');
     await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
@@ -498,7 +599,7 @@ export async function applyApproved({ dryRun = false, limit = config.apply.maxAp
     log('apply', `→ ${job.title} @ ${job.company} [${job.ats}]`);
     const r = await processJob(job, { dryRun });
     tally[r] = (tally[r] || 0) + 1;
-    await jitter(4000, 9000);
+    await jitter(2000, 4000);
   }
   return tally;
 }

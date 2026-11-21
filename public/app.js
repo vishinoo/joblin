@@ -1,4 +1,5 @@
 // Joblin dashboard — no build step. Hash routes: dashboard, review, applications, outreach, tasks, settings.
+import { suggestPlaces } from './places.js';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -19,8 +20,8 @@ const when = (t) => {
   return s < 60 ? 'just now' : s < 3600 ? `${Math.round(s / 60)}m ago` : s < 86400 ? `${Math.round(s / 3600)}h ago` : `${Math.round(s / 86400)}d ago`;
 };
 const STATUS = {
-  queued: ['Queued', ''], pending_approval: ['Needs your OK', 'accent'], approved: ['Approved', 'accent'], skipped: ['Skipped', ''],
-  prepared: ['Filled (dry run)', ''], submitted: ['Applied', 'accent'], needs_review: ['Needs a hand', 'warn'], manual: ['Apply yourself', 'warn'],
+  queued: ['Queued', ''], pending_approval: ['For review', 'accent'], approved: ['In queue', 'accent'], skipped: ['Skipped', ''],
+  prepared: ['For review', 'accent'], duplicate: ['Already applied', ''], submitted: ['Applied', 'good'], needs_review: ['Needs a hand', 'warn'], manual: ['Apply yourself', 'warn'],
   failed: ['Failed', 'bad'], interview: ['Interview', 'good'], offer: ['Offer', 'good'], rejected: ['Rejected', 'bad'], withdrawn: ['Withdrawn', ''],
   scheduled: ['Scheduled', ''], sent: ['Sent', 'accent'], replied: ['Replied', 'good'], bounced: ['Bounced', 'bad'], cancelled: ['Cancelled', ''],
 };
@@ -134,22 +135,26 @@ new MutationObserver((muts) => { for (const m of muts) for (const n of m.addedNo
 
 // ---------- Tag input with suggestions (locations, positions, resume types, companies) ----------
 // chipInput(el, { values, suggestions, placeholder, onChange, max })
-function chipInput(el, { values = [], suggestions = [], placeholder = 'Type to add…', onChange = () => {}, single = false } = {}) {
+function chipInput(el, { values = [], suggestions = [], placeholder = 'Type to add…', onChange: onChange0 = () => {}, single = false } = {}) {
   let vals = [...values];
+  const onChange = (v) => { onChange0(v); el.dispatchEvent(new Event('change', { bubbles: true })); };
   el.classList.add('chips-in');
   const draw = () => {
     el.innerHTML = `${vals.map((v, i) => `<span class="chip on">${esc(v)}<button type="button" data-x="${i}" aria-label="Remove ${esc(v)}">×</button></span>`).join('')}
       <span class="ci-wrap"><input type="text" class="ci" placeholder="${esc(placeholder)}" autocomplete="off"><div class="dd-menu ci-menu" hidden></div></span>`;
     const input = $('.ci', el), menu = $('.ci-menu', el);
-    let active = 0, shown = [];
+    let active = 0, shown = [], custom = null;
     const add = (v) => { v = String(v).trim().replace(/,$/, ''); if (!v) return; if (!vals.some((x) => x.toLowerCase() === v.toLowerCase())) { vals = single ? [v] : [...vals, v]; onChange(vals); } draw(); $('.ci', el).focus(); };
     const show = () => {
       const q = input.value.trim().toLowerCase();
-      shown = suggestions.filter((s) => !vals.some((v) => v.toLowerCase() === s.toLowerCase()) && (!q || s.toLowerCase().includes(q)))
-        .sort((a, b) => (b.toLowerCase().startsWith(q) - a.toLowerCase().startsWith(q))).slice(0, 8);
-      if (q && !shown.some((s) => s.toLowerCase() === q)) shown.push(input.value.trim());
+      // Suggestions are a list, or a function that knows better (places: "us" → the US and its states).
+      shown = typeof suggestions === 'function' ? suggestions(q, vals).slice(0, 60)
+        : suggestions.filter((s) => !vals.some((v) => v.toLowerCase() === s.toLowerCase()) && (!q || s.toLowerCase().includes(q)))
+          .sort((a, b) => (b.toLowerCase().startsWith(q) - a.toLowerCase().startsWith(q))).slice(0, 8);
+      custom = q && !shown.some((s) => s.toLowerCase() === q) ? input.value.trim() : null; // what you typed, if it isn't a suggestion
+      if (custom) shown.push(custom);
       active = 0;
-      menu.innerHTML = shown.map((s, i) => `<div class="dd-opt ${i === 0 ? 'active' : ''}" data-i="${i}">${s === input.value.trim() && !suggestions.includes(s) ? `Add “${esc(s)}”` : esc(s)}</div>`).join('');
+      menu.innerHTML = shown.map((s, i) => `<div class="dd-opt ${i === 0 ? 'active' : ''}" data-i="${i}">${s === custom ? `Add “${esc(s)}”` : esc(s)}</div>`).join('');
       menu.hidden = !shown.length || document.activeElement !== input;
       $$('.dd-opt', menu).forEach((o) => o.onmousedown = (e) => { e.preventDefault(); add(shown[+o.dataset.i]); });
     };
@@ -167,11 +172,7 @@ function chipInput(el, { values = [], suggestions = [], placeholder = 'Type to a
   return () => vals;
 }
 
-const LOCATION_SUGGESTIONS = ['Canada', 'Remote', 'United States', 'Ontario', 'British Columbia', 'Alberta', 'Quebec', 'Manitoba', 'Saskatchewan', 'Nova Scotia', 'New Brunswick', 'Newfoundland and Labrador', 'Prince Edward Island',
-  'Toronto', 'Vancouver', 'Montreal', 'Calgary', 'Edmonton', 'Ottawa', 'Waterloo', 'Kitchener', 'Mississauga', 'Surrey', 'Burnaby', 'Victoria', 'Winnipeg', 'Halifax', 'Quebec City', 'Hamilton', 'London, ON', 'Regina', 'Saskatoon',
-  'New York', 'San Francisco', 'Seattle', 'Boston', 'Chicago', 'Austin', 'Los Angeles', 'Washington DC', 'Denver', 'Atlanta', 'Miami', 'Dallas', 'Houston', 'California', 'Texas', 'Washington', 'Massachusetts', 'Illinois',
-  'United Kingdom', 'London', 'Ireland', 'Dublin', 'Germany', 'Berlin', 'France', 'Paris', 'Netherlands', 'Amsterdam', 'Spain', 'Switzerland', 'Sweden', 'Poland', 'Albania', 'Portugal', 'Italy',
-  'India', 'Bangalore', 'Singapore', 'Hong Kong', 'Japan', 'Tokyo', 'Australia', 'Sydney', 'United Arab Emirates', 'Dubai', 'Mexico', 'Brazil', 'Israel', 'South Africa', 'New Zealand'];
+const LOCATION_SUGGESTIONS = (q, taken) => suggestPlaces(q, taken); // worldwide: see public/places.js
 const POSITION_SUGGESTIONS = ['Software Engineer Intern', 'Software Developer', 'New Grad Software Engineer', 'Backend Engineer', 'Frontend Engineer', 'Full Stack Developer', 'Mobile Developer', 'DevOps Engineer', 'Data Engineer',
   'Data Analyst', 'Data Scientist', 'Machine Learning Engineer', 'AI Engineer', 'Business Intelligence Analyst', 'Product Manager', 'Associate Product Manager', 'UX Designer', 'Product Designer', 'Cybersecurity Analyst', 'IT Support',
   'Investment Banking Analyst', 'Investment Banking Summer Analyst', 'Finance Intern', 'Financial Analyst', 'Equity Research', 'Private Equity', 'Venture Capital', 'Corporate Finance', 'FP&A Analyst', 'Capital Markets', 'Wealth Management', 'Asset Management', 'Risk Analyst', 'Credit Analyst', 'Treasury Analyst', 'Quantitative Analyst', 'Trader',
@@ -187,13 +188,14 @@ function toggleChat(force) {
   chatOpen = force ?? !chatOpen;
   document.body.classList.toggle('chat-open', chatOpen);
   $('#chat').hidden = !chatOpen;
+  $('#chatFab')?.classList.toggle('hide', chatOpen);
   if (chatOpen) { loadChat(); setTimeout(() => $('#chatIn')?.focus(), 50); }
 }
-const CHAT_STARTERS = ['Software engineering internships in Canada', 'Finance and investment banking roles in Toronto', 'Only apply to Wealthsimple, Stripe and Shopify', 'Marketing internships, remote is fine', 'Start a search now'];
+const CHAT_STARTERS = ['Software engineering internships, remote is fine', 'Finance and investment banking roles in New York or London', 'Only apply to Stripe, Shopify and Wise', 'Marketing internships, remote is fine', 'Start a search now'];
 async function loadChat() {
   const msgs = await api('/chat');
   const box = $('#chatMsgs');
-  box.innerHTML = (msgs.length ? '' : `<div class="cmsg joblin"><img src="/img/joblin-logo-64.png" alt=""><div>Hi! Tell me what you’re looking for: roles, places, companies. I’ll set up the search and remember your preferences. Say “start” when you want me to go.</div></div>`)
+  box.innerHTML = (msgs.length ? '' : `<div class="cmsg joblin"><img src="/img/joblin-logo-64.png" alt=""><div>Heh, hello! I’m Joblin, your job goblin. Tell me what to hunt — roles, places, companies — and I’ll scurry off and drag back applications. Say “start” and I go with what you’ve already set up.</div></div>`)
     + msgs.map((m) => `<div class="cmsg ${m.role}">${m.role === 'joblin' ? '<img src="/img/joblin-logo-64.png" alt="">' : ''}<div>${esc(m.text)}${m.meta?.changes?.length ? `<div class="cchanges">${m.meta.changes.map((c) => `<span>${esc(c)}</span>`).join('')}</div>` : ''}</div></div>`).join('');
   $('#chatStarters').innerHTML = msgs.length > 2 ? '' : CHAT_STARTERS.map((s) => `<button class="chip" data-s="${esc(s)}">${esc(s)}</button>`).join('');
   $$('#chatStarters [data-s]').forEach((b) => b.onclick = () => sendChat(b.dataset.s));
@@ -212,11 +214,17 @@ async function sendChat(text) {
 function mountChat() {
   const el = document.createElement('aside');
   el.id = 'chat'; el.hidden = true; el.setAttribute('aria-label', 'Chat with Joblin');
-  el.innerHTML = `<div class="chat-h"><img src="/img/joblin-logo-64.png" alt=""><div><b>Joblin</b><span class="muted">Your job search assistant</span></div>
+  el.innerHTML = `<div class="chat-h"><img src="/img/joblin-logo-64.png" alt=""><div><b>Joblin</b><span class="muted">Your job goblin</span></div>
       <button class="btn sm ghost" id="chatClear" title="Clear conversation">Clear</button><button class="btn sm ghost" id="chatClose" aria-label="Close chat">✕</button></div>
     <div class="chat-msgs" id="chatMsgs"></div><div class="chips chat-starters" id="chatStarters"></div>
-    <form class="chat-f" id="chatForm"><textarea id="chatIn" rows="2" placeholder="e.g. Finance internships in Toronto at RBC or Wealthsimple"></textarea><button class="btn primary" type="submit">Send</button></form>`;
+    <form class="chat-f" id="chatForm"><textarea id="chatIn" rows="2" placeholder="e.g. Finance internships in London or New York"></textarea><button class="btn primary" type="submit">Send</button></form>`;
   document.body.appendChild(el);
+  // Always-there launcher: Joblin's face in a circle, bottom right.
+  const fab = document.createElement('button');
+  fab.id = 'chatFab'; fab.type = 'button'; fab.setAttribute('aria-label', 'Chat with Joblin'); fab.title = 'Chat with Joblin';
+  fab.innerHTML = '<img src="/img/joblin-logo-64.png" alt="">';
+  fab.onclick = () => toggleChat(true);
+  document.body.appendChild(fab);
   $('#chatClose').onclick = () => toggleChat(false);
   $('#chatClear').onclick = async () => { await api('/chat', { method: 'DELETE' }); loadChat(); };
   $('#chatForm').onsubmit = (e) => { e.preventDefault(); sendChat(); };
@@ -245,21 +253,46 @@ const state = { review: { items: [], sel: new Set(), active: null, filter: 'all'
 const TITLES = { dashboard: 'Dashboard', review: 'Review batch', applications: 'Applications', outreach: 'Outreach', tasks: 'Tasks', answers: 'Questions', memory: 'Memory', settings: 'Settings' };
 const route = () => (location.hash.replace('#/', '') || 'dashboard').split('?')[0];
 
+// A soft two-note ding when a new question needs your answer (plays after you've clicked anywhere once).
+let lastPending = null, audioCtx = null;
+document.addEventListener('pointerdown', () => { try { audioCtx ??= new AudioContext(); audioCtx.resume(); } catch {} }, { once: true });
+function ding() {
+  try {
+    audioCtx ??= new AudioContext();
+    const t0 = audioCtx.currentTime;
+    for (const [f, at] of [[880, 0], [1320, 0.12]]) {
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.type = 'sine'; o.frequency.value = f; o.connect(g); g.connect(audioCtx.destination);
+      g.gain.setValueAtTime(0.0001, t0 + at); g.gain.exponentialRampToValueAtTime(0.18, t0 + at + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t0 + at + 0.45);
+      o.start(t0 + at); o.stop(t0 + at + 0.5);
+    }
+  } catch {}
+}
+
 async function refreshSummary() {
   S = await api('/summary');
   const sys = S.system;
   $('#reviewBadge').hidden = !S.pendingReview; $('#reviewBadge').textContent = S.pendingReview;
-  $('#taskBadge').hidden = !S.openTasks; $('#taskBadge').textContent = S.openTasks;
+
   $('#qBadge').hidden = !S.pendingAnswers; $('#qBadge').textContent = S.pendingAnswers;
+  if (lastPending !== null && S.pendingAnswers > lastPending) ding();
+  lastPending = S.pendingAnswers;
   $('#sideFoot').innerHTML = `
     <div class="conn"><span class="dot ${sys.linkedin?.connected ? 'ok' : ''}"></span>LinkedIn ${sys.linkedin?.connected ? 'connected' : 'not connected'}</div>
-    <div class="conn"><span class="dot ${sys.gmail ? 'ok' : ''}"></span>Gmail ${sys.gmail ? 'connected' : 'not connected'}</div>
+    <div class="conn"><span class="dot ${sys.gmail || sys.gmailWeb?.connected ? 'ok' : ''}"></span>Gmail ${sys.gmail ? 'connected' : sys.gmailWeb?.connected ? 'reading codes' : 'not connected'}</div>
     <div class="conn"><span class="dot ${sys.llm ? 'ok' : 'bad'}"></span>${sys.llmProvider === 'ollama' ? 'Local model' : esc(sys.llmModel)} ${sys.llm ? 'ready' : 'not ready'}</div>
     <div class="conn"><span class="dot ${sys.mode.type === 'autopilot' ? 'ok' : ''}"></span>${sys.mode.type === 'autopilot' ? 'Autopilot on' : 'Review mode'}</div>`;
   const w = sys.worker;
   const WK = sys.workers || {};
-  const chip = (x, label) => x?.state ? `<span class="wk"><span class="spin"></span>${esc(label || x.detail || 'Working')}${x.progress?.total ? ` ${x.progress.done}/${x.progress.total}` : ''}</span>` : '';
-  $('#worker').innerHTML = chip(WK.find) + chip(WK.apply, 'Applying');
+  const chip = (x, label, w) => x?.state ? `<button type="button" class="wk" data-stop="${w}" title="Click to stop"><span class="spin"></span><span class="wk-l">${esc(/Stopping/.test(x.detail || '') ? x.detail : label || x.detail || 'Working')}${x.progress?.total ? ` ${x.progress.done}/${x.progress.total}` : ''}</span><span class="wk-stop">Stop</span></button>` : '';
+  $('#worker').innerHTML = chip(WK.find, null, 'find') + chip(WK.apply, 'Applying', 'apply');
+  $$('#worker [data-stop]').forEach((b) => b.onclick = async (e) => {
+    e.stopPropagation();
+    const w = b.dataset.stop;
+    if (!(await ask({ title: w === 'apply' ? 'Stop applying?' : 'Stop this search?', ok: 'Stop', danger: true,
+      body: w === 'apply' ? 'Joblin finishes the application it’s on (so nothing is left half-sent), then pauses. Approving or retrying anything starts it again.' : 'Joblin stops after the job it’s checking. Anything already found stays in Review batch.' }))) return;
+    await api('/stop', { method: 'POST', body: { worker: w } }); toast(w === 'apply' ? 'Applying will pause after this one' : 'Search stopped'); refreshSummary();
+  });
   $('#worker').style.cursor = w?.state ? 'pointer' : '';
   let sf = $('#showForm');
   if (sys.formWaiting && !sf) {
@@ -362,7 +395,8 @@ function hexMap(el) {
 const VIEWS = {};
 
 VIEWS.dashboard = async (view) => {
-  const [tasks, events] = await Promise.all([api('/tasks'), api('/events')]);
+  const [apps, events] = await Promise.all([api('/applications'), api('/events')]);
+  const needs = apps.filter((a) => ['needs_review', 'manual', 'failed'].includes(a.status)).slice(0, 6);
   const b = S.byStatus || {}, e = S.emails;
   const rate = e.sent ? Math.round((e.replied / e.sent) * 100) : 0;
   const funnel = [['Found', S.jobs], ['Prepared', S.jobs - (b.queued || 0)], ['Applied', S.submitted], ['Replies', e.replied], ['Interviews', (b.interview || 0) + (b.offer || 0)]];
@@ -390,8 +424,11 @@ VIEWS.dashboard = async (view) => {
     <div class="col">
       <section class="panel"><div class="panel-h"><h2>Pipeline</h2></div>
         <div class="panel-b funnel">${funnel.map(([l, n]) => `<div class="row"><span>${l}</span><div class="bar"><i style="width:${(n / fmax) * 100}%"></i></div><span class="n">${n}</span></div>`).join('')}</div></section>
-      <section class="panel"><div class="panel-h"><h2>Needs you</h2><div class="right"><a class="link" href="#/tasks">All tasks</a></div></div>
-        <div class="list" style="margin-top:8px">${tasks.filter((t) => !t.done).slice(0, 6).map(taskRow).join('') || '<div class="empty">Nothing needs you right now.</div>'}</div></section>
+      <section class="panel"><div class="panel-h"><h2>Needs you</h2><div class="right"><a class="link" href="#/applications">Applications</a></div></div>
+        <div class="list" style="margin-top:8px">
+          ${S.pendingAnswers ? `<div class="li"><span class="prio p1"></span><div><div class="t"><a class="link" href="#/answers">Answer ${S.pendingAnswers} question${S.pendingAnswers === 1 ? '' : 's'}</a></div><div class="d">Applications are waiting on these. They go through as soon as you answer.</div></div></div>` : ''}
+          ${needs.map((a) => `<div class="li"><span class="prio p2"></span>${mono(a.company)}<div style="min-width:0"><div class="t"><a class="link" href="#/applications">${esc(a.title)}</a></div><div class="d">${esc(a.company)} · ${esc((a.notes || STATUS[a.status]?.[0] || '').slice(0, 110))}</div></div></div>`).join('')}
+          ${!needs.length && !S.pendingAnswers ? '<div class="empty">Nothing needs you right now.</div>' : ''}</div></section>
       <section class="panel"><div class="panel-h"><h2>Recent activity</h2></div>
         <div style="margin-top:8px;max-height:260px;overflow:auto">${events.slice(0, 30).map((ev) => `<div class="ev ${ev.type}"><span class="w">${when(ev.created_at)}</span><span>${esc(ev.message)}</span></div>`).join('') || '<div class="empty">Quiet so far.</div>'}</div></section>
     </div>
@@ -455,7 +492,7 @@ VIEWS.review = async (view) => {
     <div class="panel rdetail" id="rdetail"></div>
   </div>
   <div class="decide"><span class="count"><b id="selCount">${R.sel.size}</b> of ${R.items.length} approved</span>
-    <span class="muted">Unchecked jobs are skipped. Outreach emails start after each application goes in.</span>
+    <span class="muted">Unchecked jobs stay here for later. Use Skip on any job you’re not sure about.</span>
     <div class="right"><button class="btn primary" id="applyBtn">Apply to ${R.sel.size}</button></div></div>`;
   const sync = () => { $('#selCount').textContent = R.sel.size; $('#applyBtn').textContent = `Apply to ${R.sel.size}`; $('#applyBtn').disabled = !R.sel.size; };
   sync();
@@ -465,10 +502,10 @@ VIEWS.review = async (view) => {
   $$('[data-sel]').forEach((c) => { c.onclick = (ev) => ev.stopPropagation(); c.onchange = () => { c.checked ? R.sel.add(+c.dataset.sel) : R.sel.delete(+c.dataset.sel); sync(); }; });
   $$('.ritem').forEach((el) => el.onclick = () => { R.active = +el.dataset.id; $$('.ritem').forEach((x) => x.classList.toggle('on', x === el)); renderDetail(); });
   $('#applyBtn').onclick = async () => {
-    const approve = [...R.sel], skip = R.items.map((i) => i.id).filter((id) => !R.sel.has(id));
+    const approve = [...R.sel], skip = [];
     const chosen = R.items.filter((i) => R.sel.has(i.id));
     if (!(await ask({ title: `Apply to ${approve.length} ${approve.length === 1 ? 'job' : 'jobs'}?`, image: '/img/joblin-working.png', ok: `Apply to ${approve.length}`,
-      body: `Joblin will open a Chrome window and fill each application. If a site asks for something only you can answer, it leaves the form open for you.${skip.length ? ` ${skip.length} unchecked ${skip.length === 1 ? 'job is' : 'jobs are'} skipped.` : ''}`,
+      body: `Joblin applies in the background, one after another. Jobs you didn’t check stay here for later.`,
       items: chosen.slice(0, 12).map((i) => `<div>${mono(i.company)}<span>${esc(i.title)} <span class="muted">· ${esc(i.company)}</span></span></div>`) }))) return;
     const r = await api('/review/decide', { method: 'POST', body: { approve, skip } });
     R.sel.clear(); toast(r.started ? `Applying to ${approve.length} jobs` : 'Approved — applying once the current run finishes');
@@ -486,6 +523,7 @@ VIEWS.review = async (view) => {
         <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
           <a class="btn sm" href="${esc(i.apply_url || i.linkedin_url)}" target="_blank" rel="noopener">Open posting</a>
           <a class="btn sm" href="${fileUrl(i.resume_path, bust)}" target="_blank">Resume PDF</a>
+          <button class="btn sm ghost danger" id="skipOne">Skip this job</button>
           <button class="btn sm ghost" id="swapTrack">Use ${i.track === 'swe' ? 'finance' : 'software'} resume</button>
         </div></div>
       <div class="rbody">
@@ -516,37 +554,97 @@ VIEWS.review = async (view) => {
     };
     $('#regen')?.addEventListener('click', () => regen({ precise: true }, 'Joblin is writing a new precise letter…'));
     $('#precise')?.addEventListener('click', () => regen({ precise: true }, 'Joblin is writing a precise letter for this posting…'));
+    $('#skipOne').onclick = async () => { await api('/review/decide', { method: 'POST', body: { approve: [], skip: [i.id] } }); R.sel.delete(i.id); toast('Skipped — find it under Applications → Skipped'); refreshSummary(); render(); };
     $('#swapTrack').onclick = () => regen({ track: i.track === 'swe' ? 'finance' : 'swe' }, 'Rebuilding with the other resume…');
   }
 };
 
 // ---------- Applications ----------
+// Status is set by Joblin (Applied, Needs you, In queue…). You only mark outcomes: interview, offer, rejected, withdrawn, skip.
+const APP_FILTERS = [
+  ['all', 'All', () => true],
+  ['applied', 'Applied', (s) => ['submitted', 'interview', 'offer'].includes(s)],
+  ['needs', 'Needs you', (s) => ['needs_review', 'manual', 'failed'].includes(s)],
+  ['queue', 'In queue', (s) => ['approved', 'queued'].includes(s)],
+  ['review', 'For review', (s) => s === 'pending_approval'],
+  ['skipped', 'Skipped', (s) => ['skipped', 'duplicate', 'withdrawn'].includes(s)],
+  ['rejected', 'Rejected', (s) => s === 'rejected'],
+];
+const OUTCOMES = [['interview', 'Interview'], ['offer', 'Offer'], ['rejected', 'Rejected'], ['withdrawn', 'Withdrawn'], ['skipped', 'Skip this job']];
+const statusClass = (s) => (['submitted', 'interview', 'offer'].includes(s) ? 'good' : ['approved', 'pending_approval', 'queued'].includes(s) ? 'accent' : ['needs_review', 'manual'].includes(s) ? 'warn' : ['failed', 'rejected'].includes(s) ? 'bad' : '');
+
 VIEWS.applications = async (view) => {
-  const rows = await api('/applications'); const A = state.apps;
-  const statuses = [...new Set(rows.map((r) => r.status))];
+  const [rows, { tracks }] = await Promise.all([api('/applications'), api('/tracks')]); const A = state.apps;
+  A.filter ??= 'all'; A.track ??= '';
+  // Filter by kind of job (the resume each one uses): only types that have applications are offered.
+  const label = (id) => tracks.find((t) => t.id === id)?.label || id;
+  const types = [...new Set(rows.map((r) => r.track).filter(Boolean))].sort((a, b) => label(a).localeCompare(label(b)));
+  if (A.track && !types.includes(A.track)) A.track = '';
+  const count = (k) => rows.filter((r) => APP_FILTERS.find((f) => f[0] === k)[2](r.status)).length;
+  const retryable = rows.filter((r) => ['skipped', 'failed', 'needs_review'].includes(r.status)).length;
   view.innerHTML = `
+  <div class="toolbar">
+    <div class="seg filters" id="af">${APP_FILTERS.map(([k, l]) => `<button data-f="${k}" class="${A.filter === k ? 'on' : ''}">${l}<span class="n">${count(k)}</span></button>`).join('')}</div>
+    <button class="btn" id="retryAll" style="margin-left:auto" ${retryable ? '' : 'disabled'} title="Send everything skipped, failed or stuck back through">Retry all${retryable ? ` (${retryable})` : ''}</button>
+  </div>
   <div class="toolbar"><input type="search" id="q" placeholder="Search company or role" value="${esc(A.q)}">
-    <select id="st"><option value="">Any status</option>${statuses.map((s) => `<option value="${s}" ${A.status === s ? 'selected' : ''}>${STATUS[s]?.[0] || s}</option>`).join('')}</select>
-    <select id="tr"><option value="">Both resumes</option><option value="swe" ${A.track === 'swe' ? 'selected' : ''}>Software</option><option value="finance" ${A.track === 'finance' ? 'selected' : ''}>Finance</option></select></div>
-  <div class="panel tablewrap"><table><thead><tr><th>Role</th><th>Fit</th><th>Resume</th><th>Status</th><th>Documents</th><th>Updated</th></tr></thead><tbody id="rows"></tbody></table></div>`;
+    <select id="tf" aria-label="Kind of job" style="width:auto"><option value="">All kinds of jobs</option>${types.map((t) => `<option value="${esc(t)}" ${A.track === t ? 'selected' : ''}>${esc(label(t))} (${rows.filter((r) => r.track === t).length})</option>`).join('')}</select></div>
+  <div class="panel tablewrap" id="appBox"><div class="selbar"><label style="display:flex;gap:8px;align-items:center"><input type="checkbox" data-pickall>Select all</label><span class="muted" data-count></span>
+    <div style="margin-left:auto;display:flex;gap:8px;align-items:center"><button class="btn sm" data-needsel id="bRetry">Try again</button>
+      <select id="bMark" data-needsel aria-label="Mark selected as" style="width:auto"><option value="">Mark as…</option><option value="submitted">Applied</option>${OUTCOMES.map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select>
+      <button class="btn sm ghost danger" data-needsel id="bRemove">Remove</button></div></div>
+    <table><thead><tr><th style="width:28px"></th><th>Role</th><th>Fit</th><th>Status</th><th>Documents</th><th>Updated</th></tr></thead><tbody id="rows"></tbody></table></div>`;
+  let picked = () => [];
+  const docs = (r) => r.resume_path ? `<a class="link" target="_blank" href="${fileUrl(r.resume_path)}">Resume</a> · <a class="link" target="_blank" href="${fileUrl(r.cover_letter_path)}">Letter</a>` : '—';
   const draw = () => {
-    const f = rows.filter((r) => (!A.q || `${r.company} ${r.title}`.toLowerCase().includes(A.q.toLowerCase())) && (!A.status || r.status === A.status) && (!A.track || r.track === A.track));
+    const pass = APP_FILTERS.find((f) => f[0] === A.filter)[2];
+    const f = rows.filter((r) => pass(r.status) && (!A.track || r.track === A.track) && (!A.q || `${r.company} ${r.title}`.toLowerCase().includes(A.q.toLowerCase())));
     $('#rows').innerHTML = f.map((r) => `<tr>
-      <td><div style="display:flex;gap:12px">${mono(r.company)}<div><a class="link" href="${esc(r.apply_url || r.linkedin_url)}" target="_blank" rel="noopener">${esc(r.title)}</a><div class="sub">${esc(r.company)}${r.location ? ` · ${esc(r.location)}` : ''}</div>${r.notes ? `<div class="sub">${esc(r.notes.slice(0, 160))}</div>` : ''}</div></div></td>
-      <td>${scoreBadge(r.match_score)}</td><td class="sub">${r.track === 'swe' ? 'Software' : r.track === 'finance' ? 'Finance' : '—'}</td>
-      <td><select class="status" data-id="${r.id}" aria-label="Status">${Object.keys(STATUS).filter((k) => !['scheduled', 'sent', 'replied', 'bounced', 'cancelled'].includes(k)).map((k) => `<option value="${k}" ${k === r.status ? 'selected' : ''}>${STATUS[k][0]}</option>`).join('')}</select></td>
-      <td class="sub">${r.resume_path ? `<a class="link" target="_blank" href="${fileUrl(r.resume_path)}">Resume</a> · <a class="link" target="_blank" href="${fileUrl(r.cover_letter_path)}">Letter</a>` : '—'}${r.proof_path ? ` · <a class="link" target="_blank" href="${fileUrl(r.proof_path, Date.now())}">${r.status === 'submitted' ? 'Confirmation' : 'What happened'}</a>` : ''}
-        ${['needs_review', 'failed'].includes(r.status) ? `<div style="margin-top:6px"><button class="btn sm" data-retry="${r.id}">Try again in Chrome</button></div>` : ''}</td>
-      <td class="sub">${when(r.updated_at)}</td></tr>`).join('') || `<tr><td colspan="6"><div class="empty"><b>No applications yet</b>Use Find jobs now to start your first batch.</div></td></tr>`;
+      <td><input type="checkbox" data-pick="${r.id}" aria-label="Select ${esc(r.title)}"></td>
+      <td><div style="display:flex;gap:12px">${mono(r.company)}<div><a class="link" href="${esc(r.apply_url || r.linkedin_url)}" target="_blank" rel="noopener">${esc(r.title)}</a><div class="sub">${esc(r.company)}${r.location ? ` · ${esc(r.location)}` : ''}</div>${r.notes && !['submitted'].includes(r.status) ? `<div class="sub">${esc(r.notes.slice(0, 160))}</div>` : ''}</div></div></td>
+      <td>${scoreBadge(r.match_score)}</td>
+      <td><div class="stcell">${pill(r.status).replace('class="pill', `class="pill ${statusClass(r.status)}`)}
+        <select class="mark" data-id="${r.id}" aria-label="Mark as"><option value="">Mark as…</option>${OUTCOMES.filter(([k]) => k !== r.status).map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select></div></td>
+      <td class="sub" style="white-space:nowrap">${r.proof_path ? `<div><a class="link" target="_blank" href="${fileUrl(r.proof_path, Date.now())}">${r.status === 'submitted' ? 'Confirmation' : 'What happened'}</a></div>` : ''}<div>${docs(r)}</div>
+        ${['needs_review', 'failed', 'skipped'].includes(r.status) ? `<div style="margin-top:6px"><button class="btn sm" data-retry="${r.id}">${r.status === 'skipped' ? 'Apply anyway' : 'Try again'}</button></div>` : ''}</td>
+      <td class="sub">${when(r.updated_at)}</td></tr>`).join('') || `<tr><td colspan="6"><div class="empty"><b>Nothing here</b>${A.filter === 'all' ? 'Tell Joblin what to look for and applications will show up here.' : 'No applications in this group.'}</div></td></tr>`;
     $$('[data-retry]').forEach((b) => b.onclick = async () => {
       const r = await api(`/applications/${b.dataset.retry}/retry`, { method: 'POST', body: {} });
-      toast(r.started ? 'Joblin is opening it in Chrome' : 'Queued — it runs when the current job finishes'); refreshSummary(); draw();
+      toast(r.started ? 'Joblin is applying in the background' : 'In the queue — it goes right after the current one'); refreshSummary(); render();
     });
-    $$('select.status').forEach((s) => s.onchange = async () => { await api(`/applications/${s.dataset.id}`, { method: 'PATCH', body: { status: s.value } }); toast('Status updated'); refreshSummary(); });
+    $$('select.mark').forEach((sel) => sel.onchange = async () => {
+      if (!sel.value) return;
+      await api(`/applications/${sel.dataset.id}`, { method: 'PATCH', body: { status: sel.value } });
+      toast(`Marked as ${OUTCOMES.find((o) => o[0] === sel.value)[1].toLowerCase()}`); refreshSummary(); render();
+    });
+    const all = $('[data-pickall]', view); if (all) { all.checked = false; all.indeterminate = false; }
+    picked = selectable($('#appBox'));
   };
+  const bulk = async (action, extra = {}) => {
+    const ids = picked(); if (!ids.length) return;
+    const r = await api('/applications/bulk', { method: 'POST', body: { ids, action, ...extra } });
+    return { ids, r };
+  };
+  $('#bRetry').onclick = async () => { const x = await bulk('retry'); if (x) { toast(`${x.r.count} back in the queue`); refreshSummary(); render(); } };
+  $('#bMark').onchange = async (e) => {
+    const v = e.target.value; if (!v) return;
+    const x = await bulk('status', { status: v });
+    if (x) { toast(`Marked ${x.ids.length} as ${(v === 'submitted' ? 'applied' : OUTCOMES.find((o) => o[0] === v)[1]).toLowerCase()}`); refreshSummary(); render(); }
+  };
+  $('#bRemove').onclick = async () => {
+    const n = picked().length;
+    if (!(await ask({ title: `Remove ${n} application${n === 1 ? '' : 's'}?`, body: 'They disappear from Joblin and won’t be found again in later searches.', ok: 'Remove', danger: true }))) return;
+    const x = await bulk('remove'); if (x) { toast(`Removed ${x.ids.length}`); refreshSummary(); render(); }
+  };
+  $$('#af button').forEach((b) => b.onclick = () => { A.filter = b.dataset.f; $$('#af button').forEach((x) => x.classList.toggle('on', x === b)); draw(); });
   $('#q').oninput = (e) => { A.q = e.target.value; draw(); };
-  $('#st').onchange = (e) => { A.status = e.target.value; draw(); };
-  $('#tr').onchange = (e) => { A.track = e.target.value; draw(); };
+  $('#tf').onchange = (e) => { A.track = e.target.value; draw(); };
+  $('#retryAll').onclick = async () => {
+    if (!(await ask({ title: `Retry ${retryable} application${retryable === 1 ? '' : 's'}?`, image: '/img/joblin-working.png', ok: 'Retry all',
+      body: 'Everything skipped, failed or stuck goes back in the queue and Joblin applies in the background. Applications waiting on one of your answers stay put until you answer.' }))) return;
+    const r = await api('/applications/retry-all', { method: 'POST', body: {} });
+    toast(`${r.count} back in the queue`); refreshSummary(); render();
+  };
   draw();
 };
 
@@ -581,7 +679,7 @@ VIEWS.outreach = async (view) => {
 };
 
 // ---------- Tasks ----------
-VIEWS.tasks = async (view) => {
+VIEWS.tasks = async (view) => { location.hash = '#/applications'; return;
   const tasks = await api('/tasks');
   view.innerHTML = `<div class="panel"><div class="panel-b" style="display:flex;gap:8px"><input type="text" id="newTask" placeholder="Add a task"><button class="btn" id="addTask">Add task</button></div>
     <div class="list">${tasks.map(taskRow).join('') || '<div class="empty">No tasks.</div>'}</div></div>`;
@@ -592,7 +690,7 @@ VIEWS.tasks = async (view) => {
 
 // ---------- Settings ----------
 async function loadSettings() { const r = await api('/settings'); SET = r.settings; return r; }
-const saveSettings = async (patch, msg = 'Saved') => { const r = await api('/settings', { method: 'PUT', body: patch }); SET = r.settings; toast(msg); refreshSummary(); };
+const saveSettings = async (patch, msg = 'Saved') => { const quiet = autosaving; const r = await api('/settings', { method: 'PUT', body: patch }); SET = r.settings; toast(quiet ? 'Saved' : msg); refreshSummary(); };
 const sw = (id, on) => `<label class="switch"><input type="checkbox" id="${id}" ${on ? 'checked' : ''}><span></span></label>`;
 
 VIEWS.settings = async (view) => {
@@ -601,9 +699,37 @@ VIEWS.settings = async (view) => {
   view.innerHTML = `<div class="settings"><div class="stabs">${tabs.map(([k, l]) => `<button data-t="${k}" class="${state.settingsTab === k ? 'on' : ''}">${l}</button>`).join('')}</div><div class="spane" id="spane"></div></div>`;
   $$('.stabs button').forEach((b) => b.onclick = () => { state.settingsTab = b.dataset.t; render(); });
   await SETTINGS[state.settingsTab]($('#spane'), suggested);
+  autosave($('#spane'), state.settingsTab);
 };
 
+// Every change in Settings saves by itself, a moment after you stop typing (no Save button needed).
+// AI model, Integrations and Resumes save through their own buttons and editors.
+let autosaving = false;
+function autosave(pane, tab) {
+  if (['ai', 'integrations', 'resumes'].includes(tab)) return;
+  const btn = $('button.btn.primary[id^="save"]', pane);
+  if (!btn) return;
+  btn.textContent = 'Changes save automatically'; btn.classList.remove('primary'); btn.classList.add('ghost'); btn.disabled = true;
+  let t;
+  const fire = (e) => {
+    if (e.target.closest?.('.ci, #factText, #coIn, #pvGo')) return; // typing a new chip or company isn't a change yet
+    clearTimeout(t);
+    t = setTimeout(() => { if (!pane.isConnected) return; autosaving = true; btn.disabled = false; btn.click(); btn.disabled = true; setTimeout(() => (autosaving = false), 50); }, 700);
+  };
+  pane.addEventListener('input', fire);
+  pane.addEventListener('change', fire);
+}
+
 const SETTINGS = {};
+// One line that says where Gmail stands, in plain words.
+function gmailLine(sys) {
+  const g = sys.gmailWeb || {};
+  if (sys.gmail) return `Connected as ${esc(sys.gmailUser)}. Joblin sends your outreach, watches for replies, and types in the security codes job sites email you.`;
+  if (g.note === 'waiting for sign-in') return 'Sign in to Google in the Joblin window. It closes by itself when you’re done.';
+  if (g.note === 'setting up sending') return 'Signed in. Joblin is setting up sending on Google’s App passwords page — if Google asks for your password again, type it in the Joblin window.';
+  if (g.connected) return `Signed in${g.email ? ` as ${esc(g.email)}` : ''}: Joblin types in emailed security codes. ${g.note && g.note !== 'sending not set up' ? esc(g.note[0].toUpperCase() + g.note.slice(1)) + '.' : 'Sending emails isn’t set up yet — press Connect Gmail again, or paste an app password below.'}`;
+  return `One click: sign in to Google once and Joblin handles the rest — security codes, outreach emails and replies.${g.note && !/disconnected/.test(g.note) ? ` <span style="color:var(--warn)">(${esc(g.note)})</span>` : ''}`;
+}
 SETTINGS.integrations = async (el) => {
   const sys = S.system;
   el.innerHTML = `
@@ -612,12 +738,15 @@ SETTINGS.integrations = async (el) => {
     ${sys.linkedin?.connected ? `<button class="btn danger" id="liOff">Disconnect</button>` : `<button class="btn primary" id="liOn">Connect LinkedIn</button>`}</div></section>
 
   <section class="panel panel-b"><div class="integ"><div class="ico">${logoTile('/img/brands/gmail.svg', 'Gmail')}</div>
-    <div><div class="name">Gmail</div><div class="muted" style="font-size:13px">${sys.gmail ? `Connected as ${esc(sys.gmailUser)}. Sends outreach and watches for replies.` : 'Sends outreach from your address and watches your inbox for replies, interviews and rejections.'}</div></div>
-    ${sys.google?.connected ? `<button class="btn danger" id="goOff">Disconnect</button>` : sys.gmail ? `<button class="btn danger" id="gmOff">Disconnect</button>` : sys.google?.configured ? `<button class="btn" id="goOn" style="background:#fff;color:#1f1f1f;border-color:#fff"><svg viewBox="0 0 24 24" width="16" height="16" style="stroke:none"><path fill="#4285F4" d="M22.6 12.2c0-.8-.1-1.5-.2-2.2H12v4.2h5.9a5 5 0 0 1-2.2 3.3v2.7h3.6c2.1-1.9 3.3-4.8 3.3-8z"/><path fill="#34A853" d="M12 23c3 0 5.5-1 7.3-2.7l-3.6-2.7c-1 .7-2.2 1.1-3.7 1.1-2.9 0-5.3-1.9-6.2-4.5H2.1v2.8A11 11 0 0 0 12 23z"/><path fill="#FBBC05" d="M5.8 14.2a6.6 6.6 0 0 1 0-4.3V7.1H2.1a11 11 0 0 0 0 9.9z"/><path fill="#EA4335" d="M12 5.4c1.6 0 3.1.6 4.2 1.7l3.2-3.2A11 11 0 0 0 2.1 7.1l3.7 2.8C6.7 7.3 9.1 5.4 12 5.4z"/></svg>Sign in with Google</button>` : ''}</div>
-    ${sys.gmail ? '' : `<details style="margin-top:12px"><summary class="muted" style="cursor:pointer;font-size:13px">${sys.google?.configured ? 'Or use an app password instead' : 'Connect with an app password'}</summary><ol class="steps"><li>Turn on 2-Step Verification for your Google account.</li><li>Open <a class="link" href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">App passwords</a>, create one called “Joblin”, and copy the 16 characters.</li><li>Paste it below. Joblin checks it with Google before saving.</li></ol>
-    <div class="grid2" style="margin-top:14px"><label class="f">Gmail address<input type="email" id="gmUser" placeholder="you@gmail.com" autocomplete="off"></label>
-    <label class="f">App password<input type="password" id="gmPass" placeholder="xxxx xxxx xxxx xxxx" autocomplete="off"></label></div>
-    <div style="margin-top:12px"><button class="btn primary" id="gmOn">Test and connect</button></div></details>`}</section>
+    <div><div class="name">Gmail</div><div class="muted" id="gmLine" style="font-size:13px">${gmailLine(sys)}</div></div>
+    ${sys.gmail ? '<button class="btn danger" id="gmOff">Disconnect</button>'
+      : sys.gmailWeb?.note === 'waiting for sign-in' || sys.gmailWeb?.note === 'setting up sending' ? '<button class="btn" disabled>Connecting…</button>'
+      : '<button class="btn primary" id="gwOn">Connect Gmail</button>'}</div>
+    ${sys.gmail ? '' : `<details class="alt"><summary>Or paste an app password instead</summary>
+      <ol class="steps"><li>Turn on 2-Step Verification for your Google account.</li><li>Open <a class="link" href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">App passwords</a>, create one called “Joblin”, and copy the 16 letters.</li><li>Paste it below.</li></ol>
+      <div class="grid2" style="margin-top:12px"><label class="f">Gmail address<input type="email" id="gmUser" placeholder="you@gmail.com" autocomplete="off"></label>
+      <label class="f">App password<input type="password" id="gmPass" placeholder="xxxx xxxx xxxx xxxx" autocomplete="off"></label></div>
+      <div style="margin-top:12px"><button class="btn" id="gmOn">Test and connect</button></div></details>`}</section>
 
   <section class="panel panel-b"><div class="integ"><div class="ico">${logoTile(PROVIDER_ICONS[sys.llmProvider || 'ollama']?.img || '/img/ai/ollama.webp', 'AI model')}</div>
     <div><div class="name">Local model</div><div class="muted" style="font-size:13px">${sys.llmProvider === 'ollama' ? (sys.llm ? `Running ${esc(SET.llm.model)} in Ollama on this Mac. Free.` : 'Ollama isn’t responding. Start it with: brew services start ollama') : `Using ${esc(sys.llmModel)} with your API key.`} <a class="link" href="#" id="toAi">Change model</a></div></div>
@@ -635,14 +764,15 @@ SETTINGS.integrations = async (el) => {
     try { await api('/integrations/gmail', { method: 'POST', body: { user: $('#gmUser').value, pass: $('#gmPass').value } }); toast('Gmail connected'); await refreshSummary(); render(); }
     catch (e) { toast(e.message, true); ev.target.disabled = false; ev.target.textContent = 'Test and connect'; }
   });
-  $('#goOn')?.addEventListener('click', async (ev) => {
-    ev.target.disabled = true; ev.target.textContent = 'Opening Google…';
-    try { await api('/integrations/google/start', { method: 'POST', body: {} }); toast('Finish signing in with Google in your browser'); pollGoogle(); }
-    catch (e) { toast(e.message, true); ev.target.disabled = false; ev.target.textContent = 'Sign in with Google'; }
+  $('#gmOff')?.addEventListener('click', async () => { if (!(await ask({ title: 'Disconnect Gmail?', body: 'Queued emails wait until you reconnect, and Joblin stops entering emailed codes.', ok: 'Disconnect', danger: true }))) return; await api('/integrations/gmail', { method: 'DELETE' }); await api('/integrations/gmail-web/disconnect', { method: 'POST', body: {} }); await refreshSummary(); render(); });
+  $('#gwOn')?.addEventListener('click', async (ev) => {
+    try { const r = await api('/integrations/gmail-web/connect', { method: 'POST', body: {} }); toast(r.message); ev.target.disabled = true; ev.target.textContent = 'Connecting…';
+      let n = 0; const t = setInterval(async () => { await refreshSummary(); const g = S.system.gmailWeb || {};
+        if ($('#gmLine')) $('#gmLine').innerHTML = gmailLine(S.system);
+        if (!['waiting for sign-in', 'setting up sending'].includes(g.note) || ++n > 300) { clearInterval(t); toast(S.system.gmail ? 'Gmail connected — Joblin can send emails and enter codes' : g.connected ? 'Joblin can enter emailed codes' : g.note || 'Sign-in didn’t finish', !g.connected); if (route() === 'settings') render(); } }, 2500); }
+    catch (e) { toast(e.message, true); }
   });
-  $('#goOff')?.addEventListener('click', async () => { if (!(await ask({ title: 'Disconnect Gmail?', body: 'Queued emails wait until you reconnect.', ok: 'Disconnect', danger: true }))) return; await api('/integrations/google', { method: 'DELETE' }); await refreshSummary(); render(); });
-  function pollGoogle() { let n = 0; const t = setInterval(async () => { await refreshSummary(); if (S.system.google?.connected || ++n > 200) { clearInterval(t); toast(S.system.google?.connected ? 'Gmail connected' : 'Google sign-in timed out', !S.system.google?.connected); if (route() === 'settings') render(); } }, 3000); }
-  $('#gmOff')?.addEventListener('click', async () => { if (!(await ask({ title: 'Disconnect Gmail?', body: 'Queued emails wait until you reconnect.', ok: 'Disconnect', danger: true }))) return; await api('/integrations/gmail', { method: 'DELETE' }); await refreshSummary(); render(); });
+  $('#gwOff')?.addEventListener('click', async () => { await api('/integrations/gmail-web/disconnect', { method: 'POST', body: {} }); await refreshSummary(); render(); });
   $('#toAi')?.addEventListener('click', (e) => { e.preventDefault(); state.settingsTab = 'ai'; render(); });
   $('#hunterSave').onclick = () => saveSettings({ email: { hunterApiKey: $('#hunter').value.trim() } }, 'Hunter key saved');
   function poll() { let n = 0; const t = setInterval(async () => { await refreshSummary(); if (S.system.linkedin?.connected || ++n > 120) { clearInterval(t); if (route() === 'settings') render(); } }, 3000); }
@@ -675,7 +805,8 @@ async function mountResume(track, { onboarding = false } = {}) {
   const showCurrent = () => {
     q.innerHTML = cur.file.originalName ? `<span class="pill plain">${esc(cur.file.originalName)}</span>` : '<span class="pill plain">Built in</span>';
     box.innerHTML = `<div class="srow" style="margin-top:12px"><div class="l"><b>Send my original file unchanged</b><span>Skip tailoring and attach your uploaded PDF as-is.</span></div><div class="ctl">${sw(`orig-${track}`, cur.file.useOriginalFile)}</div></div>
-      <div style="display:flex;gap:8px;margin-top:4px"><button class="btn sm" id="prev-${track}">Preview resume</button><button class="btn sm ghost" id="edit-${track}">Edit content</button></div><div id="ed-${track}"></div>`;
+      <div style="display:flex;gap:8px;margin-top:4px"><button class="btn sm" id="prev-${track}">Preview resume</button><button class="btn sm ghost" id="edit-${track}">Edit content</button></div><div id="ed-${track}"></div><div id="roles-${track}"></div>`;
+    showRoles(track);
     $(`#orig-${track}`).onchange = (e) => { if (e.target.checked && !/\.pdf$/i.test(cur.file.originalFile || '')) { e.target.checked = false; return toast('Upload a PDF first to send it unchanged', true); } saveSettings({ resumes: { [track]: { useOriginalFile: e.target.checked } } }); };
     $(`#prev-${track}`).onclick = async () => { const r = await api(`/resumes/${track}/preview`, { method: 'POST', body: {} }); window.open(fileUrl(r.path), '_blank'); };
     $(`#edit-${track}`).onclick = () => openEditor(cur.resume, 'Save changes');
@@ -691,6 +822,14 @@ async function mountResume(track, { onboarding = false } = {}) {
       toast('Resume saved'); Object.assign(cur, await api(`/resumes/${track}`)); showCurrent();
     };
     $(`#cancel-${track}`).onclick = showCurrent;
+    if (!quality) { // editing the saved resume (not a fresh upload waiting for confirmation): save as you go
+      let t;
+      $(`#edf-${track}`).addEventListener('input', () => { clearTimeout(t); t = setTimeout(async () => {
+        const data = collectResume($(`#edf-${track}`), resume);
+        await api(`/resumes/${track}/confirm`, { method: 'POST', body: { resume: data } }); Object.assign(cur.resume, data); toast('Resume saved');
+      }, 900); });
+      $(`#conf-${track}`).textContent = 'Done';
+    }
   };
   const drop = $(`[data-drop="${track}"]`), input = $('input', drop);
   const upload = async (file) => {
@@ -709,6 +848,43 @@ async function mountResume(track, { onboarding = false } = {}) {
   drop.ondragleave = () => drop.classList.remove('over');
   drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove('over'); e.dataTransfer.files[0] && upload(e.dataTransfer.files[0]); };
   showCurrent();
+}
+// The roles in a resume as boxes. Drag them into the order you want; mark the ones Joblin should lead with.
+// Untouched, Joblin orders them by fit for each job and leads with the top two.
+const KIND = { work: 'Work', leadership: 'Leadership', project: 'Project' };
+async function showRoles(track) {
+  const el = $(`#roles-${track}`); if (!el) return;
+  let u;
+  try { u = await api(`/resumes/${track}/usage`); } catch { el.innerHTML = ''; return; }
+  if (!u.roles.length) { el.innerHTML = `<div class="roles"><p class="ex">Joblin didn’t find any roles in this resume yet. Upload it or use Edit content to add them.</p></div>`; return; }
+  const ex = u.example.real ? `${esc(u.example.title)} at ${esc(u.example.company)}` : `a typical ${esc(u.example.title.toLowerCase())} posting`;
+  const roles = [...u.roles].sort((a, b) => a.rank - b.rank);
+  el.innerHTML = `<div class="roles"><div class="roles-h"><h3>${roles.length} roles Joblin uses from this resume</h3>
+      ${u.custom ? `<button class="btn sm ghost" id="rreset-${track}">Let Joblin decide</button>` : ''}</div>
+    <p class="ex">${u.custom ? 'Your order. Leads go first in cover letters and answers; the order is used on the tailored resume too.' : `Joblin’s pick for ${ex}. Drag to reorder, or press Lead on the roles you want up front — your choice is kept for every job.`}</p>
+    <div class="role-grid" id="rg-${track}">${roles.map((r) => `<div class="role${r.lead ? ' lead' : ''}" draggable="true" data-key="${esc(r.key)}">
+      <div class="rk"><span class="grip" aria-hidden="true">⋮⋮</span><span class="n">#${r.rank}</span><span class="tag">${KIND[r.kind] || 'Work'}</span>${r.current ? '<span class="tag">Current</span>' : ''}
+        <button type="button" class="lead-t${r.lead ? ' on' : ''}" aria-pressed="${r.lead}" title="${r.lead ? 'Joblin leads with this role' : 'Make this a lead role'}">${r.lead ? '★ Lead' : '☆ Lead'}</button></div>
+      <b>${esc(r.role || r.org)}</b><span class="o">${esc(r.role ? r.org : '')}${r.date ? `${r.role ? ' · ' : ''}${esc(r.date)}` : ''}</span>
+      ${r.leadBullet ? `<span class="bl">${esc(r.leadBullet)}</span>` : ''}</div>`).join('')}</div></div>`;
+  const grid = $(`#rg-${track}`);
+  const boxes = () => $$('.role', grid);
+  const save = async (msg) => {
+    const order = boxes().map((b) => b.dataset.key), leads = boxes().filter((b) => b.classList.contains('lead')).map((b) => b.dataset.key);
+    await saveSettings({ resumes: { [track]: { roleOrder: order, leads } } }, msg);
+    showRoles(track);
+  };
+  // Drag and drop: the box follows the pointer; numbers update when you let go.
+  let dragging = null;
+  grid.addEventListener('dragstart', (e) => { dragging = e.target.closest('.role'); dragging?.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; });
+  grid.addEventListener('dragover', (e) => {
+    e.preventDefault(); const over = e.target.closest('.role'); if (!dragging || !over || over === dragging) return;
+    const r = over.getBoundingClientRect(), after = (e.clientY - r.top) / r.height > 0.5 || (e.clientX - r.left) / r.width > 0.5;
+    grid.insertBefore(dragging, after ? over.nextSibling : over);
+  });
+  grid.addEventListener('dragend', () => { if (!dragging) return; dragging.classList.remove('dragging'); dragging = null; save('Order saved'); });
+  $$('.lead-t', grid).forEach((t) => t.onclick = () => { t.closest('.role').classList.toggle('lead'); save('Leads saved'); });
+  $(`#rreset-${track}`)?.addEventListener('click', async () => { await saveSettings({ resumes: { [track]: { roleOrder: [], leads: null } } }, 'Joblin will pick for each job'); showRoles(track); });
 }
 const EEO = {
   gender: ['Male', 'Female', 'Non-binary', 'Decline to self-identify'],
@@ -734,6 +910,10 @@ SETTINGS.profile = async (el) => {
     ${f('city', 'City', p.city)}${f('region', 'Province or state', p.region)}${f('country', 'Country', p.country)}${f('linkedin', 'LinkedIn URL', p.linkedin)}
     ${f('github', 'GitHub URL', p.github)}${f('website', 'Website or portfolio', p.website, 'text', 'Leave blank if you don’t have one')}</div></section>
 
+  <section class="panel panel-b fieldset"><div class="panel-h" style="padding:0"><h2>Places you can work from</h2></div>
+    <p class="muted" style="margin:-6px 0 0;font-size:13px">Cities you could easily be based in besides ${esc(p.city || 'home')}. When an application asks where you're located, Joblin answers with the one closest to the job (Calgary job → Edmonton, Vancouver job → Vancouver). Your street address and postal code stay your real ones.</p>
+    <div class="chipbox" id="baseChips"></div></section>
+
   <section class="panel panel-b fieldset"><div class="panel-h" style="padding:0"><h2>Education</h2></div>
     <div class="grid2">${f('school', 'School', p.school)}${f('degree', 'Degree', p.degree, 'text', 'e.g. Bachelor of Commerce')}
     ${f('major', 'Major', p.major)}${f('minor', 'Minor', p.minor, 'text', 'Optional')}
@@ -744,8 +924,13 @@ SETTINGS.profile = async (el) => {
     <div class="srow" style="border-top:1px solid var(--line-soft);padding-top:14px"><div class="l"><b>Transcript</b><span>${p.transcriptName ? `${esc(p.transcriptName)} — attached when an application asks for one.` : 'Optional. Attached only when an application asks for a transcript.'}</span></div>
       <div class="ctl" style="display:flex;gap:8px">${p.transcriptName ? '<button class="btn sm ghost danger" id="trDel">Remove</button>' : ''}<button class="btn sm" id="trUp">${p.transcriptName ? 'Replace' : 'Upload transcript'}</button><input type="file" id="trFile" accept=".pdf,.png,.jpg,.jpeg,.docx" hidden></div></div></section>
 
-  <section class="panel panel-b fieldset"><div class="panel-h" style="padding:0"><h2>Most recent role</h2></div>
-    <p class="muted" style="margin:-6px 0 0;font-size:13px">Used for “current employer”, “job title” and work-history sections on applications. Leave the end date blank if you still work there.</p>
+  <section class="panel panel-b fieldset"><div class="panel-h" style="padding:0"><h2>Work history</h2><span class="sub">from your resumes</span></div>
+    <p class="muted" style="margin:-6px 0 0;font-size:13px">Every role Joblin found across your resumes. Applications with several employment blocks get these in order. Change them in <a class="link" href="#/settings" id="toRes">Resumes</a>.</p>
+    <div class="role-grid" id="workHist"><div class="muted" style="font-size:13px">Loading…</div></div></section>
+
+  <section class="panel panel-b fieldset"><div class="panel-h" style="padding:0"><h2>Role listed first</h2></div>
+    <p class="muted" style="margin:-6px 0 0;font-size:13px">Used for “current employer” and “job title” questions and the first employment block. The rest of your roles follow it. Leave the end date blank if you're still there.</p>
+    <label class="f">Pick from your resumes<select id="pickRole"><option value="">Choose a role…</option></select></label>
     <div class="grid2">${f('currentEmployer', 'Employer', p.currentEmployer)}${f('currentTitle', 'Job title', p.currentTitle)}
     ${sel('jobStartMonth', 'Started — month', MONTHS_UI, 'pf')}${f('jobStartYear', 'Started — year', p.jobStartYear)}
     ${sel('jobEndMonth', 'Ended — month', ['', ...MONTHS_UI], 'pf')}${f('jobEndYear', 'Ended — year', p.jobEndYear, 'text', 'Blank if current')}</div></section>
@@ -762,12 +947,31 @@ SETTINGS.profile = async (el) => {
     ${sel('disability', 'Disability', EEO.disability)}${sel('veteran', 'Veteran status', EEO.veteran)}${sel('sexualOrientation', 'Sexual orientation', EEO.sexualOrientation)}${sel('lgbtq', 'LGBTQ+', EEO.lgbtq)}
     ${sel('indigenous', 'Indigenous (Canada)', EEO.indigenous)}${sel('visibleMinority', 'Visible minority (Canada)', EEO.visibleMinority)}</div></section>
   <div><button class="btn primary" id="saveP">Save profile</button></div>`;
+  let bases = p.bases || [];
+  chipInput($('#baseChips'), { values: bases, placeholder: 'Add a city, e.g. Austin, Texas or Edmonton, Alberta',
+    suggestions: LOCATION_SUGGESTIONS, onChange: (v) => (bases = v) });
   $('#saveP').onclick = () => {
-    const profile = { answers: {} };
+    const profile = { answers: {}, bases };
     $$('[data-pf]', el).forEach((i) => (profile[i.dataset.pf] = i.value.trim()));
     $$('[data-pa]', el).forEach((i) => (profile.answers[i.dataset.pa] = i.value.trim()));
     saveSettings(profile.answers.pronouns ? { profile: { ...profile, pronouns: profile.answers.pronouns } } : { profile }, 'Profile saved');
   };
+  $('#toRes').onclick = () => (state.settingsTab = 'resumes');
+  api('/positions').then((roles) => {
+    $('#workHist').innerHTML = roles.length ? roles.map((r) => `<div class="role${r.org === p.currentEmployer ? ' lead' : ''}"><div class="rk"><span class="tag">${KIND[r.kind] || 'Work'}</span>${r.current ? '<span class="tag">Current</span>' : ''}${r.org === p.currentEmployer ? '<span class="tag l">Listed first</span>' : ''}</div>
+      <b>${esc(r.role || r.org)}</b><span class="o">${esc(r.role ? r.org : '')}${r.date ? ` · ${esc(r.date)}` : ''}</span><span class="o">${r.tracks.map((t) => esc(t === 'swe' ? 'Software' : t === 'finance' ? 'Finance' : t)).join(' · ')} resume${r.tracks.length > 1 ? 's' : ''}</span></div>`).join('')
+      : '<div class="muted" style="font-size:13px">No roles found yet. Upload your resumes in Settings → Resumes.</div>';
+    const pick = $('#pickRole');
+    roles.forEach((r, i) => pick.add(new Option(`${r.role} · ${r.org}`, i)));
+    pick.onchange = () => {
+      const r = roles[+pick.value]; if (!r) return;
+      const set = (k, v) => { const i = $(`[data-pf="${k}"]`, el); if (!i) return; i.value = v || ''; i.dispatchEvent(new Event('change', { bubbles: true })); };
+      set('currentEmployer', r.org); set('currentTitle', r.role);
+      set('jobStartMonth', r.start?.month); set('jobStartYear', r.start?.year);
+      set('jobEndMonth', r.end?.month || ''); set('jobEndYear', r.end?.year || '');
+      toast('Filled in');
+    };
+  }).catch(() => {});
   $('#trUp').onclick = () => $('#trFile').click();
   $('#trFile').onchange = async (e) => {
     const file = e.target.files[0]; if (!file) return;
@@ -851,7 +1055,14 @@ SETTINGS.ai = async (el) => {
       <p class="muted" style="margin:0 0 14px;font-size:13px">Joblin uses this model for cover letters, emails and application questions. The local model is free. Cloud models write noticeably better and cost a fraction of a cent per application on your own key.</p>
       <div class="choice" id="provs" style="grid-template-columns:repeat(2,1fr)">${Object.entries(provs).map(([k, v]) => `<button data-p="${k}" class="${prov === k ? 'on' : ''}"><span class="pico">${logoTile(PROVIDER_ICONS[k]?.img, v.label)}</span><b>${esc(v.label)}</b><span>${k === 'ollama' ? 'Runs on this Mac. No account, no cost.' : L.keys[k] ? `Key saved (${esc(L.keys[k])})` : 'Needs an API key'}</span></button>`).join('')}</div>
       <div class="grid2" style="margin-top:16px">
-        <label class="f">Model<input type="text" id="model" value="${esc(prov === 'ollama' ? L.model : (L.models?.[prov] || provs[prov].defaultModel))}"></label>
+        <label class="f">Model<select id="model">${(() => {
+          const cur = prov === 'ollama' ? L.model : (L.models?.[prov] || provs[prov].defaultModel);
+          let list = [...(provs[prov].models || [])];
+          if (prov === 'ollama') for (const m of L.installed || []) if (!list.some(([id]) => id === m)) list.push([m, `${m} — installed`]);
+          if (prov === 'ollama') list = list.map(([id, l]) => [id, (L.installed || []).includes(id) ? l.replace(/ —/, ' (installed) —') : `${l} · needs: ollama pull ${id}`]);
+          if (cur && !list.some(([id]) => id === cur)) list.unshift([cur, cur]);
+          return list.map(([id, l]) => `<option value="${esc(id)}" ${id === cur ? 'selected' : ''}>${esc(l)}</option>`).join('');
+        })()}</select></label>
         ${prov === 'ollama' ? '<div></div>' : `<label class="f">API key<input type="password" id="key" placeholder="${L.keys[prov] ? esc(L.keys[prov]) + ' saved — paste to replace' : 'Paste your key'}" autocomplete="off"></label>`}
       </div>
       <div class="muted" style="font-size:12.5px;margin-top:8px">${prov === 'anthropic' ? 'Get a key at console.anthropic.com.' : prov === 'openai' ? 'Get a key at platform.openai.com.' : prov === 'gemini' ? 'Get a key at aistudio.google.com — Gemini has a free tier.' : 'To use a bigger local model, run: ollama pull qwen2.5:7b (needs more memory).'}</div>
@@ -897,6 +1108,8 @@ const qaRow = (r) => `<div class="qa"><input type="checkbox" data-pick="${r.id}"
   <div><div class="q">${esc(r.question)}</div><div class="m">${r.source === 'you' ? 'Your answer' : r.source === 'auto' ? 'Written by Joblin — edit or mark as yours' : 'Waiting for your answer'}${r.last_company ? ` · seen at ${esc(r.last_company)}` : ''}${r.uses ? ` · reused ${r.uses}×` : ''}</div></div>
   ${answerInput(r)}<div style="display:flex;gap:6px"><button class="btn sm" data-save="${r.id}">Save</button></div></div>`;
 function bindAnswerSaves(root) {
+  // Leaving an answer box (or picking an option) saves it, same as pressing Save.
+  $$('[data-ans]', root).forEach((i) => i.addEventListener('change', () => { if (i.value.trim()) $(`[data-save="${i.dataset.ans}"]`, root)?.click(); }));
   $$('[data-save]', root).forEach((b) => b.onclick = async () => {
     await api(`/answers/${b.dataset.save}`, { method: 'PUT', body: { answer: $(`[data-ans="${b.dataset.save}"]`, root).value } });
     toast('Saved to memory — Joblin will reuse it'); await refreshSummary(); render();
@@ -907,7 +1120,7 @@ function bindAnswerSaves(root) {
 VIEWS.answers = async (view) => {
   const pending = (await api('/answers')).filter((r) => r.source === 'pending');
   if (!pending.length) {
-    view.innerHTML = `<section class="panel hello"><img src="/img/joblin-256.png" alt=""><div><h2>No open questions</h2><div class="muted">When an application asks something Joblin can't answer, it shows up here. Once you answer, it moves to <a class="link" href="#/memory">Memory</a> and gets reused.</div></div></section>`;
+    view.innerHTML = `<section class="panel hello"><img src="/img/joblin-256.png" alt=""><div><h2>No open questions</h2><div class="muted">When an application asks something Joblin can't answer, it shows up here. Once you answer, it moves to <a class="link" href="#/memory">Memory</a> and gets reused. Written answers (“tell us about a project…”) are written fresh for each job and never need you.</div></div></section>`;
     return;
   }
   view.innerHTML = `<p class="muted" style="margin:-8px 0 16px;max-width:72ch">Questions from applications that Joblin couldn't answer. Answer them once and they move to Memory, where Joblin reuses them for similar questions.</p>
@@ -948,6 +1161,7 @@ VIEWS.memory = async (view) => {
   const addFactNow = async () => { const t = $('#factText').value.trim(); if (!t) return; await api('/facts', { method: 'POST', body: { text: t, category: $('#factCat').value } }); toast('Added to memory'); render(); };
   $('#factAdd').onclick = addFactNow; $('#factText').onkeydown = (e) => e.key === 'Enter' && addFactNow();
   $$('[data-fsave]').forEach((b) => b.onclick = async () => { await api(`/facts/${b.dataset.fsave}`, { method: 'PUT', body: { text: $(`[data-fact="${b.dataset.fsave}"]`).value } }); toast('Saved'); });
+  $$('[data-fact]').forEach((i) => i.addEventListener('change', () => $(`[data-fsave="${i.dataset.fact}"]`)?.click()));
   const pickFacts = selectable($('#factBox'));
   $('#factDel')?.addEventListener('click', async () => { const ids = pickFacts(); if (!(await ask({ title: `Forget ${ids.length} ${ids.length === 1 ? 'note' : 'notes'}?`, ok: 'Forget', danger: true }))) return; await api('/facts/delete', { method: 'POST', body: { ids } }); render(); });
   const pickAns = selectable($('#ansBox'));
@@ -958,7 +1172,7 @@ VIEWS.memory = async (view) => {
 
 // ---------- Positions: keywords for any field ----------
 function positionsEditor(el, _suggested, { onboarding = false } = {}) {
-  const loc0 = (SET.sources?.boards?.locations || ['Canada'])[0] || 'Canada';
+  const loc0 = (SET.sources?.boards?.locations || [])[0] || SET.profile?.country || '';
   let vals = (SET.search.queries || []).map((q) => q.keywords);
   el.innerHTML = `<div class="chipbox" id="posChips"></div>
     <p class="muted" style="font-size:12.5px;margin:8px 0 0">Type any job title or keyword (“marketing coordinator”, “structural engineer”, “investment banking”). Joblin matches each job to your best resume automatically.</p>`;
@@ -989,6 +1203,8 @@ SETTINGS.sources = async (el) => {
   el.innerHTML = `<section class="panel panel-b">
     <div class="srow"><div class="l"><b>Company job boards</b><span>Open roles straight from companies’ Greenhouse, Lever and Ashby pages. Joblin can submit every one of these itself.</span></div><div class="ctl">${sw('bOn', B.enabled !== false)}</div></div>
     <div class="srow"><div class="l"><b>LinkedIn</b><span>Searches LinkedIn with your positions. Needs LinkedIn connected.</span></div><div class="ctl">${sw('lOn', Li.enabled !== false)}</div></div>
+    <div class="srow"><div class="l"><b>Also show jobs I’d submit myself</b><span>Banks, pension funds, governments and big companies use Workday or their own portals, which Joblin can’t submit to — that’s where most Canadian finance internships are. Joblin still finds them, writes your resume and cover letter, and lists them under Needs you with a link; you press submit.</span></div>
+      <div class="ctl"><select id="incManual" style="width:auto">${[['off', 'Off'], ['finance', 'Finance jobs only'], ['all', 'All jobs']].map(([v, l]) => `<option value="${v}" ${(Li.includeManual === true ? 'all' : Li.includeManual === 'finance' ? 'finance' : 'off') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div></div>
     <div class="srow"><div class="l"><b>New jobs per search</b><span>Kept small so each search finishes quickly (up to 60).</span></div><div class="ctl"><input type="number" id="bMax" min="5" max="60" value="${Math.min(60, B.maxPerRun || 30)}" style="width:90px"></div></div>
   </section>
   <section class="panel panel-b"><div class="panel-h" style="padding:0 0 6px"><h2>Where</h2></div>
@@ -1015,7 +1231,7 @@ SETTINGS.sources = async (el) => {
     catch (e) { toast(e.message, true); } finally { $('#coAdd').disabled = false; $('#coAdd').textContent = 'Add company'; }
   };
   $('#coAdd').onclick = addCo; $('#coIn').onkeydown = (e) => e.key === 'Enter' && addCo();
-  $('#saveSrc').onclick = () => saveSettings({ sources: { boards: { enabled: $('#bOn').checked, maxPerRun: Math.min(60, +$('#bMax').value || 30), locations: locs, includeEntryLevelWithoutKeyword: $('#bEntry').checked }, linkedin: { enabled: $('#lOn').checked } },
+  $('#saveSrc').onclick = () => saveSettings({ sources: { boards: { enabled: $('#bOn').checked, maxPerRun: Math.min(60, +$('#bMax').value || 30), locations: locs, includeEntryLevelWithoutKeyword: $('#bEntry').checked }, linkedin: { enabled: $('#lOn').checked, includeManual: { all: true, finance: 'finance', off: false }[$('#incManual').value] } },
     search: { onlyTargets: $('#onlyT').checked, queries: (SET.search.queries || []).map((q) => ({ ...q, location: locs[0] || q.location })) } }, 'Job sources saved');
 };
 
@@ -1199,20 +1415,40 @@ const PROVIDER_ICONS = {
 };
 const logoTile = (src, alt = '') => `<span class="logo-tile"><img src="${src}" alt="${esc(alt)}"></span>`;
 
+// ---------- Share: one line a friend pastes into Terminal to get their own Joblin ----------
+const INSTALL = 'curl -fsSL https://raw.githubusercontent.com/vishinoo/joblin/main/install.sh | bash';
+const REPO = 'https://github.com/vishinoo/joblin';
+const INVITE = `I've been using Joblin, a free job-application goblin that runs on your own Mac. It finds jobs, writes a tailored resume and cover letter for each one, and applies for you.\n\nTo get it, open Terminal and paste:\n${INSTALL}\n\nMore: ${REPO}`;
+const copy = async (text, msg) => { try { await navigator.clipboard.writeText(text); toast(msg); } catch { toast('Couldn’t copy — select the text and copy it yourself', true); } };
+$('#shareBtn').onclick = async () => {
+  const p = ask({ title: 'Share Joblin with a friend', image: '/img/joblin-256.png', ok: 'Copy invite message', cancel: 'Close',
+    body: `<p style="margin:0 0 10px">Joblin is free and runs on their own computer: their resumes, answers and passwords never touch yours. They paste one line into Terminal and he sets himself up.</p>
+      <div class="share-line"><code>${esc(INSTALL)}</code><button type="button" class="btn sm" id="cpLine">Copy</button></div>
+      <p class="muted" style="margin:10px 0 0;font-size:12.5px">Works on Mac and Linux. Or send them the page: <a class="link" href="${REPO}" target="_blank" rel="noopener">${REPO.replace('https://', '')}</a></p>` });
+  $('#cpLine')?.addEventListener('click', () => copy(INSTALL, 'Install line copied'));
+  if (await p) copy(INVITE, 'Invite copied — paste it in a message');
+};
+
 // ---------- Boot ----------
 mountChat();
 await refreshSummary();
 loadSettings().catch(() => {});
 render();
-// Poll every 2s while Joblin is working (live progress), every 15s otherwise.
-let wasRunning = false;
+// Keep every page live: check for changes every 2s while Joblin works (5s otherwise) and redraw the page
+// when something on it changed — but never while you're typing, choosing, or reading a dialog.
+let lastSig = '';
+const LIVE = ['dashboard', 'review', 'applications', 'answers', 'memory', 'outreach'];
+const sig = () => JSON.stringify([S.byStatus, S.pendingAnswers, S.pendingReview, S.submitted, route() === 'dashboard' ? S.system.workers : null]);
 (async function tick() {
   try {
     await refreshSummary();
-    const running = Boolean(S.system.worker?.state);
-    const typing = document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
-    if (!typing && !document.querySelector('.tip:not([hidden])') && ((running && ['review', 'dashboard'].includes(route())) || (wasRunning && !running) || route() === 'dashboard')) render();
-    wasRunning = running;
+    const now = sig();
+    const busyHere = (document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName))
+      || document.querySelector('.modal-back, .dd-menu:not([hidden]), .tip:not([hidden])')
+      || $$('#view [data-pick]:checked').length || window.getSelection()?.toString();
+    if (now !== lastSig && lastSig && !busyHere && LIVE.includes(route())) render();
+    if (!busyHere) lastSig = now;
   } catch {}
-  setTimeout(tick, S.system?.worker?.state ? 2000 : 15000);
+  const WK = S.system?.workers || {};
+  setTimeout(tick, WK.find?.state || WK.apply?.state ? 2000 : 5000);
 })();

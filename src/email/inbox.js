@@ -1,8 +1,8 @@
 import { ImapFlow } from 'imapflow';
-import { db, log, kv, addTask } from './db.js';
-import { generateJSON, clip } from './llm.js';
+import { db, log, kv, addTask } from '../core/db.js';
+import { generateJSON, clip } from '../core/llm.js';
 import { gmailReady } from './mailer.js';
-import { googleStatus, gmailRecent } from './google.js';
+import { gmailWebStatus, gmailWebRecent, gmailWebOpen } from './gmailWeb.js';
 
 function plainText(source) {
   const s = source.toString('utf8');
@@ -62,18 +62,10 @@ const activeCompanies = () => db.prepare(`SELECT j.id, j.company, j.title, j.com
 
 export async function checkInbox() {
   if (!gmailReady()) return;
-  if (googleStatus().connected) {
-    const since = kv.get('inboxSince', Date.now() - 7 * 864e5);
-    const msgs = await gmailRecent(since);
-    const companies = activeCompanies();
-    for (const m of msgs.sort((a, b) => a.date - b.date)) await handleMessage(m, companies);
-    kv.set('inboxSince', Math.max(since, ...msgs.map((m) => m.date + 1000)));
-    return;
-  }
   return checkInboxImap();
 }
 
-// App-password fallback (IMAP).
+// Reads new mail over IMAP with your app password.
 async function checkInboxImap() {
   const client = new ImapFlow({ host: 'imap.gmail.com', port: 993, secure: true, logger: false,
     auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD } });
@@ -96,4 +88,48 @@ async function checkInboxImap() {
     lock.release();
     await client.logout().catch(() => {});
   }
+}
+
+// ---------- Verification codes ----------
+// Some job sites (Greenhouse) email an 8-character code before they accept an application.
+// Joblin reads it from your inbox (app password, or Gmail signed in inside Joblin's browser) and types it in.
+async function recentMessages(sinceMs) {
+  if (!(process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD)) return [];
+  const client = new ImapFlow({ host: 'imap.gmail.com', port: 993, secure: true, logger: false, auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD } });
+  await client.connect();
+  const lock = await client.getMailboxLock('INBOX');
+  const out = [];
+  try {
+    for await (const m of client.fetch({ since: new Date(sinceMs - 864e5) }, { envelope: true, source: { start: 0, maxLength: 30000 }, internalDate: true }))
+      if (+m.internalDate >= sinceMs - 60e3) out.push({ from: (m.envelope.from?.[0]?.address || '').toLowerCase(), subject: m.envelope.subject || '', text: plainText(m.source), date: +m.internalDate });
+  } finally { lock.release(); await client.logout().catch(() => {}); }
+  return out;
+}
+// Codes can be read with an app password or with Gmail signed in inside Joblin's browser.
+export const canReadInbox = () => gmailReady() || gmailWebStatus().connected;
+const CODE_MAIL = /greenhouse|security code|verification code|verify|one-time|passcode/i;
+// The code is the first token of the right length after the word "code" that looks generated:
+// it has a digit or a capital letter after the first character (so "Security" or "password" never match).
+export function findCode(text, length = 8) {
+  const i = String(text).search(/code/i); if (i < 0) return null;
+  return (String(text).slice(i).match(new RegExp(`\\b[A-Za-z0-9]{${length}}\\b`, 'g')) || []).find((t) => /\d/.test(t) || /[A-Z]/.test(t.slice(1))) || null;
+}
+export async function waitForCode({ company = '', sinceMs = Date.now() - 120e3, timeoutMs = 180e3, length = 8 } = {}) {
+  const until = Date.now() + timeoutMs;
+  const find = (text) => findCode(text, length);
+  const opened = new Set();
+  while (Date.now() < until) {
+    const viaWeb = !gmailReady() && gmailWebStatus().connected;
+    const msgs = await (viaWeb ? gmailWebRecent(sinceMs) : recentMessages(sinceMs)).catch(() => []);
+    for (const m of msgs.sort((a, b) => b.date - a.date)) {
+      if (!CODE_MAIL.test(`${m.from} ${m.subject} ${m.text}`)) continue;
+      if (company && !new RegExp(company.split(/\s+/)[0], 'i').test(`${m.subject} ${m.text}`) && !/greenhouse/i.test(m.from)) continue;
+      const code = find(`${m.subject} ${m.text}`);
+      if (code) return code;
+      // The feed only shows a preview; open the message once to read the whole thing.
+      if (viaWeb && m.link && !opened.has(m.link)) { opened.add(m.link); const full = find(await gmailWebOpen(m).catch(() => '')); if (full) return full; }
+    }
+    await new Promise((r) => setTimeout(r, 5000));
+  }
+  return null;
 }

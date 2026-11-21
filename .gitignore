@@ -6,5 +6,10 @@ data/
 config.json
 resumes/*.json
 templates/cover-*.txt
+<<<<<<< Updated upstream
 .joblin-version
 .runtime/
+=======
+# launch videos made with /brag
+brag-output/
+>>>>>>> Stashed changes

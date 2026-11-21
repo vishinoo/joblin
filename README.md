@@ -161,7 +161,22 @@ Everything personal stays local and is git-ignored.
 
 <p align="center"><img src="docs/images/joblin-vault.png" alt="Joblin guarding the vault with a tiny sword" width="480"></p>
 
-**Gmail:** the simplest way to connect is an [App Password](https://myaccount.google.com/apppasswords) (needs 2-Step Verification). Paste it in Settings → Integrations.
+### Project layout (for tinkerers)
+
+| Folder | What's in it |
+|---|---|
+| `start.js` | Starts everything: the dashboard, the job finder, the applier and the schedule |
+| `src/core/` | Settings, the database, and the AI model connection |
+| `src/you/` | What Joblin knows about you: resumes, roles, saved answers and notes |
+| `src/search/` | Finding jobs: LinkedIn, company job boards, and the chat assistant |
+| `src/apply/` | Writing resumes and cover letters, and filling in applications in Chrome |
+| `src/email/` | Outreach emails, reading your inbox, and emailed security codes |
+| `src/server.js` | The dashboard's API |
+| `public/` | The dashboard itself (plain HTML, CSS and JavaScript, no build step) |
+
+Changing the code? Start with [DEVELOPING.md](DEVELOPING.md): how a job flows through Joblin, where everything lives, and how to run the tests (`npm test`).
+
+**Gmail:** in Settings → Integrations, click **Connect Gmail** and sign in to Google in the Joblin window. Joblin sets up the rest: it types in the security codes job sites email you, and creates its own app password so it can send outreach (this needs 2-Step Verification on your Google account). You can also paste an [app password](https://myaccount.google.com/apppasswords) yourself.
 
 ## A word of goblin honesty
 

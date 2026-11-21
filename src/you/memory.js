@@ -1,6 +1,6 @@
 // Answer memory: every application question Joblin answers (or can't) is saved, so the same or a
 // similar question gets the same answer next time. Your own edits always win over model guesses.
-import { db } from './db.js';
+import { db } from '../core/db.js';
 
 db.exec(`CREATE TABLE IF NOT EXISTS answers (
   id INTEGER PRIMARY KEY,

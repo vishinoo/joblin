@@ -1,9 +1,8 @@
 import nodemailer from 'nodemailer';
-import { googleStatus, gmailSend } from './google.js';
-import { config } from './config.js';
-import { db, log, kv } from './db.js';
-import { fill, template } from './documents.js';
-import { generateJSON, clip } from './llm.js';
+import { config } from '../core/config.js';
+import { db, log, kv } from '../core/db.js';
+import { fill, template } from '../apply/documents.js';
+import { generateJSON, clip } from '../core/llm.js';
 
 const P = config.profile;
 // One-line intro for outreach emails, built from your profile (or set profile.pitch.<track> in config.json).
@@ -18,12 +17,9 @@ function trackPitch(track) {
 }
 
 const appPasswordReady = () => Boolean(process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD);
-export const gmailReady = () => googleStatus().connected || appPasswordReady();
-export const senderAddress = () => googleStatus().email || process.env.GMAIL_USER || '';
-async function sendMail(mail) {
-  if (googleStatus().connected) return gmailSend(mail);
-  return getTransport().sendMail(mail);
-}
+export const gmailReady = appPasswordReady;
+export const senderAddress = () => process.env.GMAIL_USER || '';
+const sendMail = (mail) => getTransport().sendMail(mail);
 
 // Used by Settings → Integrations → Test connection.
 export async function verifyGmail(user, pass) {

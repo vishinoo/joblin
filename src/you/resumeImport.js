@@ -2,8 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import pdf from 'pdf-parse/lib/pdf-parse.js';
-import { paths, saveConfig } from './config.js';
-import { reloadResumes } from './documents.js';
+import { paths, saveConfig } from '../core/config.js';
+import { reloadResumes } from '../apply/documents.js';
 
 export async function extractText(file) {
   if (/\.pdf$/i.test(file)) return (await pdf(fs.readFileSync(file))).text;
@@ -107,9 +107,14 @@ export async function importResume(track, filename, buf) {
   return { parsed, quality: parseQuality(parsed) };
 }
 
+// Edits save as you type, so keep at most one backup every 10 minutes per resume.
+const lastBackup = new Map();
 export function confirmResume(track, data) {
   const file = path.join(paths.resumes, `${track}.json`);
-  if (fs.existsSync(file)) fs.copyFileSync(file, path.join(paths.uploads, `${track}-backup-${Date.now()}.json`));
+  if (fs.existsSync(file) && Date.now() - (lastBackup.get(track) || 0) > 10 * 60e3) {
+    fs.copyFileSync(file, path.join(paths.uploads, `${track}-backup-${Date.now()}.json`));
+    lastBackup.set(track, Date.now());
+  }
   fs.writeFileSync(file, JSON.stringify(data, null, 2));
   reloadResumes();
 }

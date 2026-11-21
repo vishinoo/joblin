@@ -1,6 +1,6 @@
 import dns from 'node:dns/promises';
-import { config } from './config.js';
-import { db } from './db.js';
+import { config } from '../core/config.js';
+import { db } from '../core/db.js';
 
 const EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
 const JUNK = /noreply|no-reply|donotreply|privacy|accommodation|accessibility|example\.com|benefits|payroll|legal@/i;

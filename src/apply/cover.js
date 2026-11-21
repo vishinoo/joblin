@@ -5,10 +5,10 @@
 // 4. Write evidence paragraphs grounded only in matched bullets; reject any sentence that invents numbers.
 // 5. Assemble with a tone-appropriate frame. Every step has a safe fallback.
 import fs from 'node:fs';
-import path from 'node:path';
-import { config, paths } from './config.js';
-import { generateJSON, clip } from './llm.js';
-import { templateFileFor, tracks } from './tracks.js';
+import { config } from '../core/config.js';
+import { generateJSON, clip } from '../core/llm.js';
+import { templateFileFor, tracks } from '../you/tracks.js';
+import { rolePrefs, roleKey } from '../you/profile.js';
 
 const STOP = new Set('the and for with you our are will that this from your have who can all work team role able into about strong including such using their they them its not may more other also what we us an or of to in on at by as be is a it this'.split(' '));
 const tokens = (s) => (String(s).toLowerCase().match(/[a-z][a-z+#.&/-]{1,}/g) || []).filter((w) => !STOP.has(w) && w.length > 2);
@@ -82,20 +82,21 @@ function allEvidence(resume) {
   return ev;
 }
 
-export function matchEvidence(analysis, resume, job) {
+export function matchEvidence(analysis, resume, job, track = resume.track) {
   const ev = allEvidence(resume);
+  const leads = rolePrefs(track).leads; // roles you chose to lead with get first pick of the letter's evidence
   const jobWords = expand(tokens(`${job.title} ${job.description}`));
   const used = new Set();
   const pairs = analysis.requirements.map((req) => {
     const rWords = expand(tokens(req));
-    const ranked = ev.map((e, idx) => ({ ...e, idx, score: overlap(e.text, rWords) * 3 + overlap(e.text, jobWords) * 0.5 + (/\d/.test(e.text) ? 1 : 0) }))
+    const ranked = ev.map((e, idx) => ({ ...e, idx, score: overlap(e.text, rWords) * 3 + overlap(e.text, jobWords) * 0.5 + (/\d/.test(e.text) ? 1 : 0) + (leads?.has(roleKey(e)) ? 4 : 0) }))
       .filter((e) => !used.has(e.idx)).sort((a, b) => b.score - a.score);
     const best = ranked[0];
     if (best) used.add(best.idx);
     return { requirement: req, evidence: best };
   }).filter((p) => p.evidence);
   // Overall fit score 0-100 for ranking batches.
-  const covered = pairs.filter((p) => p.evidence.score >= 3).length;
+  const covered = pairs.filter((p) => p.evidence.score - (leads?.has(roleKey(p.evidence)) ? 4 : 0) >= 3).length; // fit ignores your lead boost
   const kw = [...jobWords].filter((w) => w.length > 3);
   const resumeWords = expand(tokens(ev.map((e) => e.text).join(' ') + ' ' + (resume.skills || []).join(' ')));
   const kwHit = kw.length ? kw.filter((w) => resumeWords.has(w)).length / kw.length : 0;
@@ -260,7 +261,7 @@ Return JSON: {"paragraph": "..."}`,
 
 export async function writeCoverLetter(job, track, resume, analysis, { precise } = {}) {
   analysis ??= await analyzeJob(job);
-  const { pairs, score } = matchEvidence(analysis, resume, job);
+  const { pairs, score } = matchEvidence(analysis, resume, job, track);
   const matches = pairs.map((p) => ({ requirement: p.requirement, evidence: p.evidence.text, org: p.evidence.org, strength: p.evidence.score }));
   const C = config.coverLetter || {};
   const wantPrecise = precise ?? (C.alwaysPrecise || score >= (C.preciseMinScore ?? 75));
