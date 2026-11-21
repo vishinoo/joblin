@@ -8,12 +8,13 @@
     "login": "node start.js login",
     "run": "node start.js run",
     "dry": "node start.js run --dry",
-    "background": "node start.js --no-window"
+    "background": "node start.js --no-window",
+    "update": "git pull --ff-only --autostash origin main && npm install --no-audit --no-fund"
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
-  "description": "",
+  "license": "MIT",
+  "description": "An office goblin who finds jobs, tailors your resume and cover letter, and applies for you. Runs free on your own computer with Ollama.",
   "type": "module",
   "dependencies": {
     "better-sqlite3": "^12.11.1",
@@ -23,5 +24,9 @@
     "nodemailer": "^10.6.1",
     "pdf-parse": "^1.1.1",
     "playwright": "^1.65.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vishinoo/joblin.git"
   }
 }

@@ -45,25 +45,53 @@ Then I hand it all to you for review. You say yes, I hit submit.
 
 ## Summon Joblin (setup)
 
-You need [Node.js 20+](https://nodejs.org), [Ollama](https://ollama.com/download), and Google Chrome.
+### The easy way (one line)
+
+Open **Terminal** (on a Mac: press `⌘ Space`, type *Terminal*, hit Enter), paste this, and press Enter:
 
 ```bash
-# 1. Give Joblin a brain (small and free, about 2 GB)
-ollama pull qwen2.5:3b
-
-# 2. Fetch the goblin
-git clone https://github.com/vishinoo/joblin.git
-cd joblin
-npm install
-npx playwright install chromium
-
-# 3. Wake him up
-npm start
+curl -fsSL https://raw.githubusercontent.com/vishinoo/joblin/main/install.sh | bash
 ```
+
+That's it. The installer:
+
+- installs Node.js and Ollama if you don't have them (using Homebrew on a Mac, if you have it)
+- downloads Joblin's free AI brain (`qwen2.5:3b`, about 2 GB)
+- puts Joblin in a `joblin` folder in your home folder
+- adds a **Joblin** launcher to your Desktop, so next time you just double-click it
+- opens Joblin
 
 Joblin opens in his own app window and walks you through setup: your details, your resumes, the jobs you want, connecting LinkedIn and Gmail, and how much freedom to give him.
 
+Works on macOS and Linux. On Windows, use [WSL](https://learn.microsoft.com/windows/wsl/install). Google Chrome is recommended.
+
+<details>
+<summary><b>The manual way</b> (if you like typing)</summary>
+
+You need [Node.js 20+](https://nodejs.org), [Ollama](https://ollama.com/download) and git.
+
+```bash
+ollama pull qwen2.5:3b                           # give Joblin a brain
+git clone https://github.com/vishinoo/joblin.git # fetch the goblin
+cd joblin
+npm install
+npx playwright install chromium
+npm start                                        # wake him up
+```
+
 Rather keep him in a browser tab? Run `npm run background` and visit **http://localhost:4321**.
+
+</details>
+
+## Keeping Joblin up to date
+
+Joblin checks GitHub for new versions on his own. When there's one, a **"Joblin learned new tricks"** card shows up in the sidebar with a list of what changed. Click **Update & restart** and he does the rest.
+
+Your settings, resumes, cover letters, applications and passwords are never touched by an update. They live in files that the update leaves alone.
+
+Prefer the terminal? Run `npm run update` in the Joblin folder, or just run the one-line installer again.
+
+Want to know when a new version ships? Click **Watch → Custom → Releases** at the top of this page.
 
 ## How Joblin works
 
@@ -115,6 +143,7 @@ npm run background   # dashboard only, at http://localhost:4321
 npm run run          # find and prepare a batch right now
 npm run dry          # same, but never submits
 npm run login        # sign into LinkedIn
+npm run update       # get the newest Joblin
 ```
 
 ## Where Joblin keeps his things
@@ -126,6 +155,7 @@ Everything personal stays local and is git-ignored.
 | Settings | `config.json` (created on first run from `config.example.json`, edited from the Settings page) |
 | Gmail app password and API keys | `.env` (never shown in the UI) |
 | Resume content | `resumes/*.json` (edit in Settings → Resumes) |
+| Cover letter templates | `templates/cover-*.txt` (edit in Settings) |
 | Generated PDFs | `data/output/<job>/` |
 | Database | `data/jobert.db` |
 
@@ -136,6 +166,12 @@ Everything personal stays local and is git-ignored.
 ## A word of goblin honesty
 
 Joblin helps you apply. He doesn't guarantee you a job, and it's on you to read what goes out under your name. Some sites don't allow automated applications, so check the rules for the boards you use, and be kind to recruiters' inboxes.
+
+## License
+
+Joblin is free and open source under the [MIT License](LICENSE). Use him, fork him, teach him new tricks. Pull requests welcome.
+
+Don't want Joblin checking for updates? Set `"updates": { "check": false }` in `config.json`.
 
 ---
 

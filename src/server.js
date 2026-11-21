@@ -17,6 +17,7 @@ import { linkedinStatus, connectLinkedIn, disconnectLinkedIn, isBrowserBusy, sho
 import { importResume, confirmResume, parseQuality } from './resumeImport.js';
 import { getResume, renderLetter, renderResumePreview, chooseTrack, renderSampleLetter } from './documents.js';
 import { prepareJob, suggestAnswer } from './apply.js';
+import { updateRoutes } from './updater.js';
 
 const SUGGESTED = {
   swe: ['Software Engineer Intern', 'Software Developer Intern', 'New Grad Software Engineer', 'Backend Engineer Intern', 'Full Stack Developer Intern', 'Machine Learning Intern', 'AI Engineer Intern', 'Data Engineer Intern', 'Data Analyst Intern'],
@@ -40,6 +41,7 @@ export function startServer(actions) {
   app.use(express.json({ limit: '2mb' }));
   app.use(express.static(path.join(ROOT, 'public')));
   const sendErr = (res, e, code = 400) => res.status(code).json({ error: e.message || String(e) });
+  updateRoutes(app);
 
   // ---------- Overview ----------
   app.get('/api/summary', async (_req, res) => {

@@ -149,5 +149,8 @@
     "linkedin": {
       "enabled": true
     }
+  },
+  "updates": {
+    "check": true
   }
 }

@@ -37,6 +37,20 @@ for (const t of ['swe', 'finance']) {
 // `config` is a single shared object: saveConfig mutates it in place so every module sees updates live.
 export const config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
 const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
+
+// After an update, settings added to config.example.json get their defaults; your own values are never changed.
+function addMissing(target, defaults) {
+  let added = false;
+  for (const [k, v] of Object.entries(defaults)) {
+    if (!(k in target)) { target[k] = structuredClone(v); added = true; }
+    else if (isObj(v) && isObj(target[k])) added = addMissing(target[k], v) || added;
+  }
+  return added;
+}
+try {
+  if (addMissing(config, JSON.parse(fs.readFileSync(path.join(ROOT, 'config.example.json'), 'utf8'))))
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2) + '\n');
+} catch {}
 function merge(target, patch) {
   for (const [k, v] of Object.entries(patch)) {
     if (isObj(v) && isObj(target[k])) merge(target[k], v);
