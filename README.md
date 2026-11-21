@@ -41,7 +41,7 @@ Then I hand it all to you for review. You say yes, I hit submit.
 - **Yours.** Every resume, letter and email is editable before it goes anywhere. Your edits always win.
 - **Bring your own brain if you want.** Prefer Claude, OpenAI or Gemini? Paste a key in Settings and I'll use that instead.
 
-<p align="center"><img src="docs/images/joblin-robot.png" alt="Joblin dressed up as a cardboard robot" width="300"></p>
+<p align="center"><img src="docs/images/joblin-robot.png" alt="Joblin dressed up as a cardboard robot" width="480"></p>
 
 ## Summon Joblin (setup)
 
@@ -74,7 +74,7 @@ Rather keep him in a browser tab? Run `npm run background` and visit **http://lo
 
 The browser runs invisibly in the background by default, so you can keep using your computer. Switch it to **window** in Settings → Automation to watch Joblin type.
 
-<p align="center"><img src="docs/images/joblin-studying.png" alt="Joblin studying at his desk" width="400"></p>
+<p align="center"><img src="docs/images/joblin-studying.png" alt="Joblin studying at his desk" width="480"></p>
 
 ### Where Joblin finds jobs
 
@@ -105,7 +105,7 @@ The browser runs invisibly in the background by default, so you can keep using y
 - **Keep the email cap low.** The defaults (40 a day, a few minutes apart, business hours only) keep your Gmail out of trouble.
 - **Edit anything.** Every letter can be edited or regenerated on the Review page before you approve it.
 
-<p align="center"><img src="docs/images/joblin-dancing.png" alt="Joblin doing a happy dance" width="300"></p>
+<p align="center"><img src="docs/images/joblin-dancing.png" alt="Joblin doing a happy dance" width="480"></p>
 
 ## Commands
 
@@ -129,7 +129,7 @@ Everything personal stays local and is git-ignored.
 | Generated PDFs | `data/output/<job>/` |
 | Database | `data/jobert.db` |
 
-<p align="center"><img src="docs/images/joblin-vault.png" alt="Joblin guarding the vault with a tiny sword" width="440"></p>
+<p align="center"><img src="docs/images/joblin-vault.png" alt="Joblin guarding the vault with a tiny sword" width="480"></p>
 
 **Gmail:** the simplest way to connect is an [App Password](https://myaccount.google.com/apppasswords) (needs 2-Step Verification). Paste it in Settings → Integrations.
 
@@ -141,7 +141,7 @@ Joblin helps you apply. He doesn't guarantee you a job, and it's on you to read 
 
 <div align="center">
 
-<img src="docs/images/joblin-offer-letter.png" alt="Joblin holding an offer letter for $1,000,000 a month" width="300">
+<img src="docs/images/joblin-rich.png" alt="Joblin after landing the job: sunglasses, cigar and a stack of gold watches" width="480">
 
 **Like the goblin? Give him a ⭐. He keeps them in a jar.**
 
