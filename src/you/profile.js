@@ -24,7 +24,7 @@ export function parseDates(date) {
 }
 const sortKey = (p) => Number(p.start.year || 0) * 12 + Math.max(0, MONTHS.indexOf(String(p.start.month).toLowerCase()));
 
-const readResume = (id) => { try { return JSON.parse(fs.readFileSync(resumeFileFor(id), 'utf8')); } catch { return null; } };
+export const readResume = (id) => { try { return JSON.parse(fs.readFileSync(resumeFileFor(id), 'utf8')); } catch { return null; } };
 
 // Positions in one resume, most recent first. kind: work | leadership | project
 export function positionsOf(resume) {

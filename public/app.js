@@ -40,7 +40,8 @@ function mono(name, size = '') {
 
 // ---------- Dialog: replaces the browser's confirm() ----------
 // ask({ title, body, ok, cancel, danger, image, items }) → Promise<boolean>
-function ask({ title, body = '', ok = 'Continue', cancel = 'Cancel', danger = false, image = '', items = [] }) {
+// read: optional (modal) => value, returned instead of true when you confirm (e.g. a date picked inside the modal).
+function ask({ title, body = '', ok = 'Continue', cancel = 'Cancel', danger = false, image = '', items = [], read = null, onOpen = null }) {
   return new Promise((resolve) => {
     const back = document.createElement('div');
     back.className = 'modal-back';
@@ -49,7 +50,7 @@ function ask({ title, body = '', ok = 'Continue', cancel = 'Cancel', danger = fa
       <div class="mb">${body}${items.length ? `<div class="list">${items.join('')}</div>` : ''}</div>
       <div class="mf"><button class="btn ghost" data-no>${esc(cancel)}</button><button class="btn ${danger ? 'danger-solid' : 'primary'}" data-yes>${esc(ok)}</button></div></div>`;
     const prev = document.activeElement;
-    const close = (v) => { back.remove(); document.removeEventListener('keydown', key, true); prev?.focus?.(); resolve(v); };
+    const close = (v) => { if (v && read) { v = read(back); if (v === null) return; } back.remove(); document.removeEventListener('keydown', key, true); prev?.focus?.(); resolve(v); };
     const key = (e) => { if (e.key === 'Escape') { e.preventDefault(); close(false); } if (e.key === 'Enter' && !/TEXTAREA/.test(document.activeElement?.tagName)) { e.preventDefault(); close(true); } };
     back.addEventListener('mousedown', (e) => { if (e.target === back) close(false); });
     $('[data-no]', back).onclick = () => close(false);
@@ -57,6 +58,7 @@ function ask({ title, body = '', ok = 'Continue', cancel = 'Cancel', danger = fa
     document.addEventListener('keydown', key, true);
     document.body.appendChild(back);
     $('[data-yes]', back).focus();
+    onOpen?.(back);
   });
 }
 
@@ -714,7 +716,7 @@ VIEWS.outreach = async (view) => {
   <div class="panel tablewrap" id="outBox" ${rows.length ? '' : 'hidden'}><div class="selbar"><label style="display:flex;gap:8px;align-items:center"><input type="checkbox" data-pickall>Select all</label><span class="muted" data-count></span>
     <div style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <button class="btn sm primary" data-needsel id="oSend" title="Send at the next sending slot">Send now</button>
-      <span class="schedwrap"><input type="datetime-local" id="oAt" aria-label="Schedule for"><button class="btn sm" data-needsel id="oSched">Schedule</button></span>
+      <button class="btn sm" data-needsel id="oSched">Schedule…</button>
       <button class="btn sm ghost danger" data-needsel id="oDiscard">Discard</button></div></div>
     <table class="outtable"><thead><tr><th style="width:28px"></th><th>Person</th><th>Company</th><th>Email</th><th>Status</th><th>When</th></tr></thead><tbody id="orows"></tbody></table></div>`;
 
@@ -759,11 +761,25 @@ VIEWS.outreach = async (view) => {
   };
   let picked = () => [];
   const bulk = async (action, extra = {}) => { const ids = picked(); if (!ids.length) return null; return api('/emails/bulk', { method: 'POST', body: { ids, action, ...extra } }); };
-  const soon = new Date(Date.now() + 864e5); soon.setHours(9, 0, 0, 0); if ($('#oAt')) $('#oAt').value = toLocalInput(soon.toISOString());
   $('#oSend').onclick = async () => { const r = await bulk('send'); if (r) { toast(`${r.count} queued — ${sys.gmail ? 'they go out a few minutes apart in your sending hours' : 'connect Gmail so they can send'}`); refreshSummary(); render(); } };
+  // Schedule: a small window to pick the day and time, then Schedule again to confirm.
   $('#oSched').onclick = async () => {
-    const v = $('#oAt').value; if (!v) return toast('Pick a date and time first', true);
-    const at = fromLocalInput(v); if (utcDate(at) < new Date()) return toast('Pick a time in the future', true);
+    const n = picked().length; if (!n) return;
+    const at9 = (days) => { const d = new Date(); d.setDate(d.getDate() + days); while (d.getDay() % 6 === 0) d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); return d; };
+    // Distinct weekday mornings (on a weekend "tomorrow" and "in 2 days" would both be Monday).
+    const quick = [];
+    for (let d = 1; quick.length < 2 && d < 10; d++) { const x = at9(d); if (!quick.some((q) => +q[1] === +x)) quick.push([`${x.toLocaleDateString(undefined, { weekday: 'long' })} morning`, x]); }
+    const week = at9(7); if (!quick.some((q) => +q[1] === +week)) quick.push(['Next week', week]);
+    const at = await ask({
+      title: `Schedule ${n} email${n === 1 ? '' : 's'}`, ok: 'Schedule',
+      body: `<p class="muted" style="margin:0 0 12px">They go out a few minutes apart starting at this time${E.sendWindow ? `, within your sending hours (${E.sendWindow.startHour}:00–${E.sendWindow.endHour}:00 on weekdays)` : ''}.</p>
+        <div class="quickpick">${quick.map(([l, d], i) => `<button type="button" class="btn sm" data-q="${i}">${l}<span class="sub">${esc(d.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}</span></button>`).join('')}</div>
+        <label class="f" style="margin-top:12px">Or pick a day and time<input type="datetime-local" id="schedAt" value="${toLocalInput(quick[0][1].toISOString())}"></label>
+        <div class="sub" id="schedErr" style="color:var(--bad);margin-top:6px" hidden>Pick a time in the future.</div>`,
+      onOpen: (m) => $$('[data-q]', m).forEach((b) => b.onclick = () => { $('#schedAt', m).value = toLocalInput(quick[+b.dataset.q][1].toISOString()); $$('[data-q]', m).forEach((x) => x.classList.toggle('on', x === b)); }),
+      read: (m) => { const v = $('#schedAt', m).value; if (!v || new Date(v) < new Date()) { $('#schedErr', m).hidden = false; return null; } return fromLocalInput(v); },
+    });
+    if (!at) return;
     const r = await bulk('schedule', { at }); if (r) { toast(`${r.count} scheduled for ${exactTime(at)}`); refreshSummary(); render(); }
   };
   $('#oDiscard').onclick = async () => {

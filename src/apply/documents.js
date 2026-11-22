@@ -26,18 +26,26 @@ export const template = (name) => fs.readFileSync(path.join(paths.templates, nam
 // ---------- Which resume fits this job: keyword scores across all your types, the model breaks close calls ----------
 export async function chooseTrack(job) {
   const mine = tracks().map((t) => t.id);
-  if (mine.includes(job.search_track)) return job.search_track;
+  // A search's resume type is trusted, except for roles that sit between fields (a data analyst at a tech company
+  // fits a software resume better than a finance one): those are decided from the posting itself below.
+  const between = /\b(data|analytics|business intelligence|bi|quant\w*|machine learning|product|fintech|systems|technology)\b/i.test(job.title);
+  if (mine.includes(job.search_track) && !(between && mine.length > 1)) return job.search_track;
   const ranked = scoreTracks(job);
+  if (between) return askTrack(job, ranked.slice(0, 4).map((t) => t.id), ranked[0].id);
   if (ranked.length < 2 || ranked[0].score - ranked[1].score >= 4 || ranked[0].score === 0 && ranked.length === 1) return ranked[0].id;
-  const top = ranked.slice(0, 4);
+  return askTrack(job, ranked.slice(0, 4).map((t) => t.id), ranked[0].id);
+}
+async function askTrack(job, ids, fallback) {
+  const top = ids.map((id) => ({ id }));
   const out = await generateJSON(
     `Which resume fits this job best? Choose one id.
 Options: ${top.map((t) => `"${t.id}" (${trackLabel(t.id)})`).join(', ')}
 Job: ${job.title} at ${job.company}
+Pick by the skills the job needs day to day (and what the company does), not by the job title alone.
 Description: ${clip(job.description, 1200)}
 Respond as JSON: {"track": "<id>"}`,
-    { track: ranked[0].id }, { temperature: 0 });
-  return top.some((t) => t.id === out.track) ? out.track : ranked[0].id;
+    { track: fallback }, { temperature: 0 });
+  return top.some((t) => t.id === out.track) ? out.track : fallback;
 }
 
 // ---------- Resume tailoring: reorder real content, never invent ----------

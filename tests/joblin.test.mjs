@@ -142,3 +142,15 @@ test('chat: "more emails to <company>" finds the application you mean', async ()
   assert.equal(jobNamedIn('more people at ryan please')?.id, id);
   assert.equal(jobNamedIn('more people at Bryant'), null);
 });
+
+test('outreach intro leads with the experience that fits the job; company line never invents', async () => {
+  const { jobField, topicOk } = await import('../src/email/mailer.js');
+  assert.equal(jobField({ title: 'Data Analyst, Intern' }, 'finance'), 'tech');
+  assert.equal(jobField({ title: 'Summer 2027 Tax Consulting Intern - Canada' }, 'swe'), 'finance');
+  assert.equal(jobField({ title: 'Financial Data Analyst' }, 'finance'), 'finance');
+  const desc = 'You will join the payments team building fraud detection for small businesses.';
+  assert.equal(topicOk('fraud detection for small businesses', desc, 'Stripe'), true);
+  assert.equal(topicOk('blockchain trading for hedge funds', desc, 'Stripe'), false); // not in the posting
+  assert.equal(topicOk('what we do at Stripe', desc, 'Stripe'), false);
+  assert.equal(topicOk('fraud prevention for online businesses', 'fraud prevention for online businesses', 'X'), false); // the prompt's example
+});

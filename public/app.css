@@ -478,3 +478,7 @@ tr.grouprow td { background: var(--canvas); color: var(--muted); font-size: 12px
 .emailedit textarea { width: 100%; font: inherit; font-size: 13.5px; line-height: 1.5; }
 .schedwrap { display: inline-flex; gap: 6px; align-items: center; }
 .schedwrap input { width: auto; padding: 4px 8px; font-size: 13px; }
+.quickpick { display: flex; gap: 8px; flex-wrap: wrap; }
+.quickpick .btn { display: grid; text-align: left; gap: 2px; padding: 8px 12px; }
+.quickpick .btn .sub { font-size: 12px; }
+.quickpick .btn.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
