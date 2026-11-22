@@ -464,3 +464,15 @@ details.alt[open] summary { margin-bottom: 10px; }
 .share-line code { flex: 1; min-width: 0; font-size: 12px; overflow-x: auto; white-space: nowrap; color: var(--ink); }
 
 .ci-menu { max-height: 300px; overflow-y: auto; }
+
+/* Applications: date headings between rows */
+tr.grouprow td { background: var(--canvas); color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: .02em; padding: 8px 12px; }
+
+/* Outreach */
+.pill.reply { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); font-weight: 600; }
+.outtable .why { font-style: italic; }
+.outtable tr.unread td { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.linkbtn { background: none; border: 0; padding: 0; margin-top: 4px; color: var(--ink-2, inherit); cursor: pointer; text-align: left; font: inherit; font-size: 13px; text-decoration: underline dotted; }
+.replybox { margin-top: 8px; padding: 8px 10px; border-left: 3px solid var(--accent); background: var(--canvas); border-radius: 6px; font-size: 13px; max-width: 560px; }
+.emailedit { display: grid; gap: 8px; margin-top: 10px; max-width: 560px; }
+.emailedit textarea { width: 100%; font: inherit; font-size: 13.5px; line-height: 1.5; }

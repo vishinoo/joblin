@@ -4,6 +4,7 @@ import { noteFocus } from './linkedin.js';
 // and it updates your search, remembers your preferences, and starts a search when you ask.
 import { config } from '../core/config.js';
 import { db, log, kv } from '../core/db.js';
+import { jobNamedIn, appliedCompanies, moreOutreachFor } from '../email/contacts.js';
 import { generateJSON } from '../core/llm.js';
 import { addFact, listFacts } from '../you/memory.js';
 import { tracks, scoreTracks } from '../you/tracks.js';
@@ -96,6 +97,26 @@ export async function chat(message, actions) {
   const Q = config.search.queries || [];
   const companies = config.search.companies || [];
   const prefs = listFacts().filter((f) => ['companies', 'preferences', 'goals'].includes(f.category)).slice(0, 8).map((f) => f.text);
+
+  // "More emails / people at <company I applied to>": find more people for that role and write drafts.
+  if (/\b(more|other|additional|another|extra|new)\b.{0,50}\b(people|emails?|messages?|contacts?|drafts?|outreach|recruiters?|managers?)\b/i.test(text)) {
+    const job = jobNamedIn(text);
+    if (job) {
+      const n = Math.min(5, Number(text.match(/\b([1-5])\b/)?.[1]) || 3);
+      moreOutreachFor(job, n).then((fresh) => say('joblin', fresh.length
+        ? `Heh, found ${fresh.length} more at ${job.company}: ${fresh.map((c) => c.name).join(', ')}. ${config.email.autoSend ? 'Their emails are queued.' : 'Drafts are waiting on Outreach.'}`
+        : `Sniffed all around ${job.company} and found nobody new for ${job.title}. Try again in a few days?`)).catch(() => {});
+      const reply = `${pick(GOBLIN.go)} Digging up ${n} more people at ${job.company} who work near the ${job.title} role. I’ll write ${config.email.autoSend ? 'and queue' : 'drafts for'} them — check Outreach in a minute or two.`;
+      say('joblin', reply);
+      return { reply };
+    }
+    const cos = [...new Set(appliedCompanies().map((j) => j.company))].slice(0, 6);
+    if (cos.length && /\b(email|message|people|contact|outreach|draft)/i.test(text)) {
+      const reply = `Which company, boss? You've applied to ${cos.join(', ')}${cos.length === 6 ? '…' : ''}. Say e.g. “more people at ${cos[0]}”.`;
+      say('joblin', reply);
+      return { reply };
+    }
+  }
 
   // Status questions answer instantly.
   if (STATUS.test(text) && text.length < 60) {

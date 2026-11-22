@@ -1,15 +1,12 @@
-Subject: {{role}} application – {{name}}
+Subject: {{role}} at {{company}}
 
 Hi {{first_name}},
 
-I just applied for the {{role}} role at {{company}} and wanted to reach out directly. {{personal_line}}
+I just applied for the {{role}} role at {{company}} and thought I'd reach out directly. {{personal_line}}
 
 {{track_pitch}}
 
-Would you be open to a quick 15-minute chat, or could you point me to the right person on the team? My resume is attached.
+If you have 15 minutes in the next couple of weeks, I'd love to hear how the team works. I've attached my resume in case it's useful.
 
-Thanks for your time,
-{{name}}
-{{phone}}{{linkedin_line}}
-
-If you'd prefer not to hear from me, just reply "stop" and I won't email again.
+Thanks,
+{{name}}{{linkedin_line}}

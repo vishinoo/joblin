@@ -106,7 +106,13 @@
     "followUpAfterDays": 5,
     "maxContactsPerJob": 2,
     "useGuessedEmails": true,
-    "hunterApiKey": ""
+    "hunterApiKey": "",
+    "autoSend": false,
+    "autoReply": false,
+    "templates": {
+      "intro": "",
+      "followup": ""
+    }
   },
   "dashboard": {
     "port": 4321

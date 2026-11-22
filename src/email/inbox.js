@@ -1,7 +1,7 @@
 import { ImapFlow } from 'imapflow';
 import { db, log, kv, addTask } from '../core/db.js';
 import { generateJSON, clip } from '../core/llm.js';
-import { gmailReady } from './mailer.js';
+import { gmailReady, draftReply } from './mailer.js';
 import { nextPattern } from './finder.js';
 import { renderEmail } from './people.js';
 import { gmailWebStatus, gmailWebRecent, gmailWebOpen } from './gmailWeb.js';
@@ -39,7 +39,7 @@ function retryNextAddress(email) {
 }
 
 // Handles one inbox message: outreach replies, bounces, and application outcomes.
-async function handleMessage({ from, subject, text }, companies) {
+async function handleMessage({ from, subject, text, messageId }, companies) {
   if (/mailer-daemon|postmaster/.test(from)) {
     const to = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi)?.find((e) => db.prepare('SELECT 1 FROM contacts WHERE email = ?').get(e.toLowerCase()));
     if (to) {
@@ -52,15 +52,15 @@ async function handleMessage({ from, subject, text }, companies) {
   }
   const contact = db.prepare('SELECT * FROM contacts WHERE email = ?').get(from);
   if (contact) {
-    db.prepare(`UPDATE emails SET status='replied', replied_at=datetime('now'), reply_snippet=? WHERE contact_id=? AND status='sent'`).run(text.slice(0, 280), contact.id);
+    db.prepare(`UPDATE emails SET status='replied', replied_at=datetime('now'), reply_snippet=?, seen=0 WHERE contact_id=? AND status='sent'`).run(text.slice(0, 600), contact.id);
     db.prepare(`UPDATE emails SET status='cancelled' WHERE contact_id=? AND status='scheduled'`).run(contact.id);
     if (/\b(stop|unsubscribe|remove me)\b/i.test(text.slice(0, 300))) {
       db.prepare('UPDATE contacts SET unsubscribed = 1 WHERE id = ?').run(contact.id);
       log('email', `${from} opted out`);
     } else {
       const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(contact.job_id);
-      addTask({ title: `Reply to ${contact.name || from} (${job?.company})`, detail: text.slice(0, 400), url: 'https://mail.google.com', priority: 1, jobId: contact.job_id });
       log('email', `Reply from ${from}`);
+      await draftReply(contact, job, { subject, text, messageId }).catch((e) => log('error', `reply draft: ${e.message}`));
     }
     return;
   }
@@ -119,7 +119,7 @@ async function checkInboxImap() {
     for await (const msg of client.fetch(range || query, { envelope: true, source: { start: 0, maxLength: 40000 }, uid: true }, { uid: Boolean(range) })) {
       if (msg.uid <= lastUid) continue;
       maxUid = Math.max(maxUid, msg.uid);
-      await handleMessage({ from: (msg.envelope.from?.[0]?.address || '').toLowerCase(), subject: msg.envelope.subject || '', text: plainText(msg.source) }, companies);
+      await handleMessage({ from: (msg.envelope.from?.[0]?.address || '').toLowerCase(), subject: msg.envelope.subject || '', text: plainText(msg.source), messageId: msg.envelope.messageId }, companies);
     }
     kv.set('lastUid', maxUid);
   } finally {

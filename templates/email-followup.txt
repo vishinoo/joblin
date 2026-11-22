@@ -1,8 +1,8 @@
-Subject: Re: {{role}} application – {{name}}
+Subject: Re: {{role}} at {{company}}
 
 Hi {{first_name}},
 
-Just following up on my note from last week about the {{role}} role at {{company}}. I'm still very interested and would appreciate any guidance on next steps.
+Bumping this in case it got buried. I'm still keen on the {{role}} role and happy to work around your schedule if a quick chat makes sense.
 
-Best,
+Thanks,
 {{name}}

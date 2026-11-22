@@ -31,6 +31,11 @@ const US = /united states|\bu\.?s\.?a?\b|america/i;
 // The job being filled right now (one application at a time). Location answers use the base closest to it.
 let JOB = {};
 const here = () => homeFor(JOB.location);
+const DIAL = /country code|dial(l?ing)? code|phone.{0,20}country|country.{0,20}(phone|mobile)/i;
+const dialCountry = () => countryOf(P.country || P.location || '')?.name || P.country || '';
+// Your number as digits only, without a leading country code ("+1 250-608-6197" → "2506086197"): what phone boxes accept.
+const PHONE = /phone|mobile/i;
+const phoneDigits = () => String(P.phone || '').replace(/^\s*\+\d{1,3}[\s.-]+/, '').replace(/\D/g, '');
 const today = () => new Date().toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
 const RULES = [
   [/zip|postal/i, () => P.postalCode],
@@ -61,7 +66,9 @@ const RULES = [
   [/last\s*name|surname|family name/i, P.lastName],
   [/^(full\s*)?name\b|your name|legal name/i, `${P.firstName} ${P.lastName}`],
   [/e-?mail/i, P.email],
-  [/phone|mobile/i, P.phone],
+  // "Phone country code" dropdowns ("Canada (+1)"): the country your phone number is from, i.e. yours.
+  [DIAL, () => dialCountry()],
+  [/phone|mobile/i, () => phoneDigits()],
   [/linkedin/i, P.linkedin],
   [/github/i, P.github],
   [/website|portfolio|personal site|other url/i, () => P.website || P.github || ''],
@@ -245,7 +252,7 @@ async function fillForm(frame, job, docs, { scope = '' } = {}) {
   for (const f of fields) {
     const el = loc(frame, f);
     const label = f.label;
-    if (f.visible && f.type !== 'hidden') await jitter(120, 380); // human pacing between fields
+    if (f.visible && f.type !== 'hidden') await jitter(60, 180); // human pacing between fields
     try {
       if (f.type === 'file') {
         const what = `${label} ${f.name} ${f.id}`;
@@ -256,16 +263,30 @@ async function fillForm(frame, job, docs, { scope = '' } = {}) {
       }
       // Radio buttons are often drawn as styled boxes with the real (0×0) input hidden, so they're grouped
       // whether or not the input itself is visible. Everything else must be visible to be filled.
-      const choice = (f.type === 'radio' || f.type === 'checkbox') && f.name;
+      const choice = (f.type === 'radio' && f.name) || f.type === 'checkbox';
       if ((!f.visible && !choice) || ['hidden', 'submit', 'button', 'search'].includes(f.type)) continue;
       if (!label && !choice) continue;
-      if (!f.id && !f.name && f.tag === 'input') continue; // hidden mirror inputs behind custom dropdowns
+      if (!f.id && !f.name && f.tag === 'input' && f.type !== 'checkbox') continue; // hidden mirror inputs behind custom dropdowns
       if (f.type === 'radio' || f.type === 'checkbox') {
-        if (f.type === 'checkbox' && /agree|consent|acknowledge|certify|privacy|terms/i.test(label)) await el.check().catch(() => {});
+        // Unlabelled boxes (LinkedIn's "I consent"): read the text beside the box and the question above it.
+        const boxText = f.type === 'checkbox' && !label ? await el.evaluate((n) => [
+          (n.id && document.querySelector(`label[for="${CSS.escape(n.id)}"]`)?.innerText) || n.closest('label')?.innerText || '',
+          // The option text often sits beside the box's wrapper ("I consent"): the nearest ancestor with a little text.
+          [n.parentElement, n.parentElement?.parentElement, n.parentElement?.parentElement?.parentElement].map((x) => (x?.innerText || '').trim()).find((t) => t && t.length < 120) || '',
+          n.closest('fieldset')?.querySelector('legend')?.innerText || window.nearQuestion?.(n) || ''].join(' ')).catch(() => '') : label;
+        if (f.type === 'checkbox' && /agree|consent|acknowledge|certify|privacy|terms/i.test(boxText) && !/marketing|newsletter|promotional|text messages|sms/i.test(boxText)) {
+          // Styled boxes (LinkedIn) hide the real input: force it, then click its label if it still isn't ticked.
+          await el.check({ force: true }).catch(() => {});
+          if (!(await el.isChecked().catch(() => true))) {
+            const id = await el.getAttribute('id').catch(() => null);
+            await (id ? frame.locator(`label[for="${id}"]`) : el.locator('xpath=..')).first().click({ force: true }).catch(() => {});
+          }
+        }
         else if (f.name) { if (!radioGroups.has(f.name)) radioGroups.set(f.name, []); radioGroups.get(f.name).push(f); }
         continue;
       }
-      if (f.value) continue;
+      // Pre-filled boxes are kept — except a phone country picked for you, or a phone with dashes/spaces (many forms want digits only).
+      if (f.value && !(DIAL.test(label) && f.tag === 'select') && !(PHONE.test(label) && !DIAL.test(label) && /\D/.test(f.value))) continue;
 
       // Custom dropdowns (React-Select on Greenhouse, Ashby, etc.): open, read options, click one.
       if (f.combo && f.tag === 'input') {
@@ -579,7 +600,7 @@ async function easyApply(job, docs, { dryRun = false } = {}) {
     await btn.click({ timeout: 5000 }).catch(() => {}); // LinkedIn changes the page address as the pop-up opens; the click still lands
     await page.locator(EA_DIALOG).first().waitFor({ timeout: 12000 });
     for (let step = 0; step < 15; step++) {
-      await jitter(700, 1200);
+      await jitter(400, 700);
       const dialogText = await page.locator(EA_DIALOG).first().innerText().catch(() => '');
       if (EA_DONE.test(dialogText)) break;
       const unanswered = await fillForm(page.mainFrame(), job, docs, { scope: EA_SCOPE });
@@ -590,14 +611,26 @@ async function easyApply(job, docs, { dryRun = false } = {}) {
       }
       if (!label) break;
       await next.click().catch(() => {});
-      await jitter(1200, 2000);
+      await jitter(800, 1300);
       // Still on the same step after Next (LinkedIn flags missing answers): those questions need you.
       const nowText = await page.locator(EA_DIALOG).first().innerText().catch(() => '');
       const stuck = !/submit/i.test(label) && nowText === dialogText;
       const flagged = /please (enter|make a selection|select|answer)|enter a (valid|whole) |this field is required|required/i.test(nowText) && nowText === dialogText;
       if (stuck || flagged) {
-        const errs = nowText.split('\n').filter((l) => /please (enter|make|select|answer)|required|valid/i.test(l)).slice(0, 3);
-        const qs = unanswered.length ? unanswered : errs.length ? errs : ['A question in LinkedIn Easy Apply'];
+        // The fields LinkedIn marked invalid, by their question text.
+        const flaggedQs = await page.locator(`${EA_DIALOG} [aria-invalid="true"]`).evaluateAll((els) => els.map((el) =>
+          ((el.id && document.querySelector(`label[for="${CSS.escape(el.id)}"]`)?.innerText) || el.getAttribute('aria-label') || window.nearQuestion?.(el) || '').trim())
+          .filter(Boolean)).catch(() => []);
+        const qs = [...new Set([...unanswered, ...flaggedQs])].filter((q) => !/^(please|this field|enter a valid)/i.test(q));
+        if (!qs.length) {
+          const shot = path.join(path.dirname(docs.resumePath), 'what-happened.png');
+          await page.screenshot({ path: shot }).catch(() => {});
+          db.prepare('UPDATE applications SET proof_path = ? WHERE job_id = ?').run(shot, job.id);
+          await close();
+          setStatus(job.id, 'needs_review', 'Easy Apply stopped on a step Joblin couldn’t read — see What happened, then finish it on LinkedIn (documents are ready)');
+          log('apply', `Needs a hand: ${job.title} @ ${job.company} (Easy Apply step Joblin couldn't read)`);
+          return 'needs_review';
+        }
         for (const q of qs) waitOn(remember(q, '', { company: job.company }), job.id);
         await close();
         setStatus(job.id, 'needs_review', `Waiting for your answer: ${qs.slice(0, 3).join(' | ')}`);
@@ -707,7 +740,7 @@ export async function applyApproved({ dryRun = false, limit = config.apply.maxAp
     log('apply', `→ ${job.title} @ ${job.company} [${job.ats}]`);
     const r = await processJob(job, { dryRun });
     tally[r] = (tally[r] || 0) + 1;
-    await jitter(2000, 4000);
+    if (!['manual', 'skipped'].includes(r)) await jitter(1000, 2000); // a breather only after real browser work
   }
   return tally;
 }

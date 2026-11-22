@@ -4,7 +4,7 @@ import path from 'node:path';
 import { ROOT, config, saveConfig, saveEnv, paths } from './core/config.js';
 import { db, kv, addTask, log } from './core/db.js';
 import { gmailReady, verifyGmail, resetTransport, senderAddress, scheduleOutreach } from './email/mailer.js';
-import { findContacts } from './email/contacts.js';
+import { findContacts, moreOutreachFor } from './email/contacts.js';
 import { llmAvailable, PROVIDERS, testModel, currentModel, installedOllamaModels } from './core/llm.js';
 import { gmailWebStatus, connectGmailWeb, disconnectGmailWeb } from './email/gmailWeb.js';
 import { listAnswers, setAnswer, deleteAnswer, pendingCount, listFacts, addFact, updateFact, deleteFacts, deleteAnswers, confirmAnswers, unblockedBy } from './you/memory.js';
@@ -32,6 +32,7 @@ function publicSettings() {
   c.sources.boards.defaults = DEFAULT_BOARDS;
   c.coverLetter.defaultTemplates = Object.fromEntries(tracks().map((t) => [t.id, fs.readFileSync(templateFileFor(t.id), 'utf8')]));
   c.coverLetter.activeTemplates = Object.fromEntries(tracks().map((t) => [t.id, getTemplate(t.id)]));
+  c.email.defaultTemplates = Object.fromEntries(['intro', 'followup'].map((k) => [k, fs.readFileSync(path.join(paths.templates, `email-${k}.txt`), 'utf8')]));
   c.trackList = tracks().map((t) => ({ id: t.id, label: t.label }));
   return c;
 }
@@ -67,6 +68,8 @@ export function startServer(actions) {
       heat: db.prepare(`SELECT CAST(strftime('%w', created_at, 'localtime') AS INT) dow, CAST(strftime('%H', created_at, 'localtime') AS INT) hr, COUNT(*) n
         FROM events WHERE type IN ('apply','email','prepare') AND created_at > datetime('now','-28 days') GROUP BY dow, hr`).all(),
       pendingAnswers: pendingCount(),
+      newReplies: db.prepare(`SELECT COUNT(DISTINCT contact_id) n FROM emails WHERE status = 'replied' AND seen = 0`).get().n,
+      drafts: db.prepare(`SELECT COUNT(*) n FROM emails WHERE status = 'draft'`).get().n,
       contacts: count('SELECT COUNT(*) n FROM contacts'),
       avgScore: db.prepare(`SELECT ROUND(AVG(match_score)) n FROM applications WHERE match_score IS NOT NULL`).get().n || 0,
       system: {
@@ -138,7 +141,7 @@ export function startServer(actions) {
   });
 
   app.post('/api/applications/retry-all', (_req, res) => {
-    const rows = db.prepare(`SELECT a.job_id FROM applications a WHERE a.status IN ('skipped','failed','needs_review','prepared')
+    const rows = db.prepare(`SELECT a.job_id FROM applications a WHERE a.status IN ('failed','needs_review')
       AND NOT EXISTS (SELECT 1 FROM answer_waits w JOIN answers x ON x.id = w.answer_id WHERE w.job_id = a.job_id AND x.answer = '')`).all();
     const upd = db.prepare(`UPDATE applications SET status = 'approved', notes = 'Retrying', updated_at = datetime('now') WHERE job_id = ?`);
     db.transaction(() => rows.forEach((r) => { upd.run(r.job_id); db.prepare(`DELETE FROM tasks WHERE related_job_id = ? AND (title LIKE 'Finish application%' OR title LIKE 'Apply yourself%')`).run(r.job_id); }))();
@@ -176,8 +179,8 @@ export function startServer(actions) {
 
   // ---------- Outreach / tasks / events ----------
   app.get('/api/emails', (_req, res) => res.json(db.prepare(`
-    SELECT e.id, e.kind, e.subject, e.body, e.status, e.scheduled_at, e.sent_at, e.replied_at, e.reply_snippet, e.error,
-      c.name, c.email, c.source, c.confidence, c.linkedin, j.company, j.title
+    SELECT e.id, e.kind, e.subject, e.body, e.status, e.scheduled_at, e.sent_at, e.replied_at, e.reply_snippet, e.error, e.seen,
+      c.name, c.email, c.source, c.confidence, c.linkedin, c.title AS person_title, c.why, j.company, j.title
     FROM emails e JOIN contacts c ON c.id = e.contact_id JOIN jobs j ON j.id = c.job_id
     ORDER BY COALESCE(e.replied_at, e.sent_at, e.scheduled_at) DESC LIMIT 2000`).all()));
   // Catch up: find people (and queue intro emails) for applications already sent that have no contacts yet.
@@ -201,7 +204,31 @@ export function startServer(actions) {
   });
   app.get('/api/outreach/finding', (_req, res) => res.json({ running: finding }));
 
-  app.post('/api/emails/:id/cancel', (req, res) => { db.prepare(`UPDATE emails SET status='cancelled' WHERE id=? AND status='scheduled'`).run(req.params.id); res.json({ ok: true }); });
+  app.post('/api/emails/:id/cancel', (req, res) => { db.prepare(`UPDATE emails SET status='cancelled' WHERE id=? AND status IN ('scheduled','draft')`).run(req.params.id); res.json({ ok: true }); });
+  // Edit a draft or scheduled email: wording and when it goes out (UTC "YYYY-MM-DD HH:MM:SS").
+  app.put('/api/emails/:id', (req, res) => {
+    const { subject, body, scheduled_at } = req.body || {};
+    const at = scheduled_at && /^\d{4}-\d\d-\d\d \d\d:\d\d(:\d\d)?$/.test(scheduled_at) ? scheduled_at : null;
+    db.prepare(`UPDATE emails SET subject = COALESCE(?, subject), body = COALESCE(?, body), scheduled_at = COALESCE(?, scheduled_at) WHERE id = ? AND status IN ('draft','scheduled')`)
+      .run(subject ?? null, body ?? null, at, req.params.id);
+    res.json({ ok: true });
+  });
+  // Send drafts: they join the queue and go out in your sending hours, spaced apart.
+  app.post('/api/emails/send', (req, res) => {
+    const ids = (req.body?.ids || []).map(Number);
+    const n = ids.length
+      ? db.transaction(() => ids.reduce((k, id) => k + db.prepare(`UPDATE emails SET status='scheduled' WHERE id=? AND status='draft'`).run(id).changes, 0))()
+      : db.prepare(`UPDATE emails SET status='scheduled' WHERE status='draft'`).run().changes;
+    res.json({ count: n });
+  });
+  app.post('/api/emails/seen', (_req, res) => { db.prepare(`UPDATE emails SET seen = 1 WHERE status = 'replied' AND seen = 0`).run(); res.json({ ok: true }); });
+  // "More people at this company" (also from the chat).
+  app.post('/api/outreach/more', async (req, res) => {
+    const job = db.prepare(`SELECT j.*, a.track FROM jobs j JOIN applications a ON a.job_id = j.id WHERE j.id = ?`).get(Number(req.body?.jobId));
+    if (!job) return sendErr(res, new Error('No such application'));
+    res.json({ started: true });
+    moreOutreachFor(job, Math.min(5, Number(req.body?.n) || 3)).catch((e) => log('error', `more people ${job.company}: ${e.message}`));
+  });
   app.post('/api/email/pause', (req, res) => { kv.set('emailPaused', Boolean(req.body.paused)); res.json({ ok: true }); });
 
   app.get('/api/tasks', (_req, res) => res.json(db.prepare('SELECT * FROM tasks WHERE done = 0 ORDER BY priority, created_at DESC LIMIT 500').all()));
@@ -234,6 +261,7 @@ export function startServer(actions) {
       const env = {}; for (const [prov, val] of Object.entries(keys)) if (PROVIDERS[prov]?.key && val && !String(val).startsWith('••••')) env[PROVIDERS[prov].key] = String(val).trim();
       if (Object.keys(env).length) saveEnv(env); }
     if (patch.sources?.boards) delete patch.sources.boards.defaults;
+    if (patch.email) delete patch.email.defaultTemplates;
     if (patch.coverLetter) { delete patch.coverLetter.defaultTemplates; delete patch.coverLetter.activeTemplates; }
     saveConfig(patch);
     res.json({ settings: publicSettings() });

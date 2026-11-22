@@ -101,35 +101,50 @@ async function searchLinkedInPeople(keywords) {
 }
 
 // Up to `max` people at the company worth emailing about this job: recruiters first, then someone on the team.
-export const findPeople = cached('people', 30, async (company, field, title = '', max = 3) => {
+// Who counts: they work at the company now (per LinkedIn), and they either hire for this kind of role
+// (campus / early-career / talent recruiters) or work on the team the role sits in (a manager or senior person).
+const teamFor = (field, title) => (FIELD_PEOPLE.find(([re]) => re.test(`${field} ${title}`)) || [null, 'hiring manager'])[1];
+const roleWords = (title) => String(title || '').replace(/\b(summer|fall|winter|spring|20\d\d|intern(ship)?|co-?op|student|new grad|program|early career|canada|\(.*?\)|[-–,|].*$)\b/gi, ' ').replace(/\s+/g, ' ').trim();
+async function pickPeople(company, field, title, max, queries, exclude = []) {
   if (!linkedinStatus().connected) return [];
-  const team = (FIELD_PEOPLE.find(([re]) => re.test(`${field} ${title}`)) || [null, 'hiring manager'])[1];
   const results = [];
-  for (const q of [`${company} university recruiter`, `${company} ${team}`]) {
+  for (const q of queries) {
     results.push(...(await searchLinkedInPeople(q).catch((e) => { log('error', `people search ${company}: ${e.message}`); return []; })));
   }
-  if (!results.length) return [];
+  const skip = new Set(exclude.map((n) => String(n).toLowerCase()));
+  const pool = results.filter((r, i) => results.findIndex((x) => x.url === r.url) === i && ![...skip].some((n) => r.text.toLowerCase().includes(n)));
+  if (!pool.length) return [];
   const out = await generateJSON(
     `These are LinkedIn search results. Pick up to ${max} people who CURRENTLY work at "${company}" and would be good to email about a "${title || field}" internship/new-grad application:
-recruiters (university/campus/early-career/talent acquisition) first, then a manager or senior person on the relevant team.
+recruiters (university/campus/early-career/talent acquisition) first, then a manager or senior person on the team this role sits in.
 Skip anyone who doesn't clearly work at ${company} now, students, and people at other companies.
+For each, say in a few words why they're a good person to email (e.g. "campus recruiter for Canada", "manages the tax team").
 Results:
-${results.map((r, i) => `${i + 1}. ${r.text}`).join('\n')}
-Respond as JSON: {"people": [{"n": <result number>, "name": "First Last", "title": "their role"}]}`,
-    { people: [] }, { temperature: 0, maxTokens: 300 });
+${pool.map((r, i) => `${i + 1}. ${r.text}`).join('\n')}
+Respond as JSON: {"people": [{"n": <result number>, "name": "First Last", "title": "their role", "why": "short reason"}]}`,
+    { people: [] }, { temperature: 0, maxTokens: 400 });
   const picked = [];
   for (const p of Array.isArray(out.people) ? out.people : []) {
-    const r = results[Number(p.n) - 1];
+    const r = pool[Number(p.n) - 1];
     const name = String(p.name || '').replace(/\s*[,(|].*$/, '').trim();
     if (!r || name.split(/\s+/).length < 2 || !r.text.toLowerCase().includes(name.split(/\s+/)[0].toLowerCase())) continue; // must really be in the results
     if (/^[a-z]\.?$/i.test(name.split(/\s+/).pop())) continue; // LinkedIn hid the last name ("Edward O."): no way to know their address
-    if (!new RegExp(company.split(/\s+/)[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i').test(r.text)) continue; // and really at this company
+    // …and really at this company: its name must appear apart from the person's own name ("Ryan Mann" isn't proof of working at Ryan).
+    const aside = r.text.replace(new RegExp(name.split(/\s+/).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'gi'), ' ');
+    if (!new RegExp(`\\b${company.split(/\s+/)[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(aside)) continue;
     if (picked.some((x) => x.name === name)) continue;
-    picked.push({ name, title: String(p.title || '').slice(0, 120), linkedin: r.url });
+    picked.push({ name, title: String(p.title || '').slice(0, 120), linkedin: r.url, why: String(p.why || '').slice(0, 140) });
     if (picked.length >= max) break;
   }
   return picked;
-});
+}
+export const findPeople = cached('people', 30, async (company, field, title = '', max = 3) =>
+  pickPeople(company, field, title, max, [`${company} university recruiter`, `${company} ${teamFor(field, title)}`]));
+// "More people at this company": wider searches around the role, skipping everyone already found.
+export const findMorePeople = (company, field, title, max, exclude) => {
+  const role = roleWords(title);
+  return pickPeople(company, field, title, max, [`${company} recruiter`, `${company} talent acquisition`, ...(role ? [`${company} ${role} manager`, `${company} ${role}`] : [`${company} ${teamFor(field, title)}`])], exclude);
+};
 
 // An address for a person: Hunter's verified one if you have a key, else the company's pattern.
 export async function emailFor(name, domain) {

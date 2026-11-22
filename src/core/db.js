@@ -73,6 +73,9 @@ for (const sql of [
   'ALTER TABLE contacts ADD COLUMN linkedin TEXT',
   'ALTER TABLE contacts ADD COLUMN pattern TEXT', // the address pattern used (for retrying after a bounce)
   'ALTER TABLE contacts ADD COLUMN tried TEXT', // JSON list of patterns already tried
+  'ALTER TABLE contacts ADD COLUMN why TEXT', // why Joblin picked this person (shown on Outreach)
+  'ALTER TABLE emails ADD COLUMN in_reply_to TEXT', // Message-ID a reply answers (threads it in Gmail)
+  'ALTER TABLE emails ADD COLUMN seen INTEGER DEFAULT 0', // you've looked at this reply (sidebar badge)
 ]) { try { db.exec(sql); } catch {} }
 
 export function log(type, message) {

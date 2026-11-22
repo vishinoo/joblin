@@ -33,8 +33,12 @@ const getTransport = () => (transport ??= nodemailer.createTransport({
   service: 'gmail', auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD },
 }));
 
-function render(tplName, vars) {
-  const text = fill(template(tplName), vars);
+// Your own version from Settings → Email outreach wins over the built-in template.
+export const emailTemplate = (kind) => config.email.templates?.[kind]?.trim() || template(`email-${kind}.txt`);
+// Lines that make an email read like a mail merge are dropped, whatever the template says.
+const ROBOTIC = /^(if you('d| would) prefer not to hear from me|reply ["“]?stop|to unsubscribe|this (email|message) was sent)/i;
+function render(kind, vars) {
+  const text = fill(emailTemplate(kind), vars).split('\n').filter((l) => !ROBOTIC.test(l.trim())).join('\n').replace(/\n{3,}/g, '\n\n');
   const [first, ...rest] = text.split('\n');
   return { subject: first.replace(/^Subject:\s*/, '').trim(), body: rest.join('\n').trim() };
 }
@@ -60,18 +64,22 @@ Respond as JSON: {"line": "..."}`,
 }
 
 // Queue an intro email per contact (follow-ups are queued when the intro actually sends).
+// "Summer 2027 Tax Consulting Intern - Canada" reads better in an email as "Tax Consulting Intern".
+export const shortRole = (t) => String(t || '').replace(/\s*[(\[].*?[)\]]/g, '').replace(/\s+[-–|,]\s+.*$/, '').replace(/^(summer|fall|winter|spring)?\s*20\d\d\s*/i, '').replace(/^(summer|fall|winter|spring)\s+/i, '').trim() || t;
 export async function scheduleOutreach(job, contacts, docs) {
   for (const c of contacts) {
     if (db.prepare('SELECT 1 FROM emails WHERE contact_id = ?').get(c.id)) continue;
     const first = (c.name || '').split(' ')[0] || 'there';
     const personal_line = await personalLine(job, c);
-    const { subject, body } = render('email-intro.txt', {
-      role: job.title, company: job.company, first_name: first, name: `${P.firstName} ${P.lastName}`,
+    const { subject, body } = render('intro', {
+      role: shortRole(job.title), company: job.company, first_name: first, name: `${P.firstName} ${P.lastName}`,
       personal_line, track_pitch: trackPitch(docs.track), phone: P.phone,
       linkedin_line: P.linkedin ? `\n${P.linkedin}` : '',
     });
-    db.prepare(`INSERT INTO emails (contact_id, kind, subject, body, scheduled_at) VALUES (?, 'intro', ?, ?, datetime('now'))`).run(c.id, subject, body);
-    log('email', `Queued intro → ${c.email} (${c.source}) for ${job.company}`);
+    // Auto-send off (the default): it waits on Outreach as a draft until you send it.
+    const status = config.email.autoSend ? 'scheduled' : 'draft';
+    db.prepare(`INSERT INTO emails (contact_id, kind, subject, body, status, scheduled_at) VALUES (?, 'intro', ?, ?, ?, datetime('now'))`).run(c.id, subject, body, status);
+    log('email', `${status === 'draft' ? 'Drafted' : 'Queued'} intro → ${c.email} (${c.source}) for ${job.company}`);
   }
 }
 
@@ -88,27 +96,29 @@ export async function dripTick() {
 
   const e = db.prepare(`SELECT e.*, c.email AS to_email, c.job_id, c.name AS contact_name FROM emails e JOIN contacts c ON c.id = e.contact_id
     WHERE e.status = 'scheduled' AND e.scheduled_at <= datetime('now') AND c.unsubscribed = 0
-    ORDER BY e.kind = 'followup' DESC, e.scheduled_at LIMIT 1`).get();
+    ORDER BY e.kind = 'reply' DESC, e.kind = 'followup' DESC, e.scheduled_at LIMIT 1`).get();
   if (!e) return;
 
   const app = db.prepare('SELECT resume_path FROM applications WHERE job_id = ?').get(e.job_id);
   const intro = e.kind === 'followup' ? db.prepare(`SELECT message_id FROM emails WHERE contact_id = ? AND kind = 'intro'`).get(e.contact_id) : null;
+  const thread = e.kind === 'reply' ? e.in_reply_to : intro?.message_id;
   try {
     const info = await sendMail({
       from: `${P.firstName} ${P.lastName} <${senderAddress()}>`,
       to: e.to_email, subject: e.subject, text: e.body,
       attachments: e.kind === 'intro' && app?.resume_path ? [{ path: app.resume_path }] : [],
-      ...(intro?.message_id ? { inReplyTo: intro.message_id, references: intro.message_id } : {}),
+      ...(thread ? { inReplyTo: thread, references: thread } : {}),
     });
     db.prepare(`UPDATE emails SET status='sent', sent_at=datetime('now'), message_id=? WHERE id=?`).run(info.messageId, e.id);
     if (e.kind === 'intro') {
-      const { subject, body } = render('email-followup.txt', {
-        role: db.prepare('SELECT title FROM jobs WHERE id=?').get(e.job_id).title,
+      const { body } = render('followup', {
+        role: shortRole(db.prepare('SELECT title FROM jobs WHERE id=?').get(e.job_id).title),
         company: db.prepare('SELECT company FROM jobs WHERE id=?').get(e.job_id).company,
         first_name: (e.contact_name || '').split(' ')[0] || 'there', name: `${P.firstName} ${P.lastName}`,
       });
+      // Same subject with "Re:", so it lands in the same thread as the intro.
       db.prepare(`INSERT INTO emails (contact_id, kind, subject, body, scheduled_at) VALUES (?, 'followup', ?, ?, datetime('now', ?))`)
-        .run(e.contact_id, subject, body, `+${E.followUpAfterDays} days`);
+        .run(e.contact_id, `Re: ${e.subject.replace(/^re:\s*/i, '')}`, body, `+${E.followUpAfterDays} days`);
     }
     log('email', `Sent ${e.kind} → ${e.to_email}`);
   } catch (err) {
@@ -117,4 +127,25 @@ export async function dripTick() {
   }
   const gap = (E.minGapMinutes + Math.random() * (E.maxGapMinutes - E.minGapMinutes)) * 60_000;
   kv.set('nextSendAt', Date.now() + gap);
+}
+
+// Someone answered your outreach: draft a short reply in your voice. With auto-reply on it's queued to send;
+// otherwise it waits on Outreach for you to read, edit and send.
+export async function draftReply(contact, job, { subject, text, messageId }) {
+  const out = await generateJSON(
+    `You are ${P.firstName} ${P.lastName}, a student who applied for "${job?.title}" at ${job?.company}. ${contact.name || 'Someone'}${contact.title ? ` (${contact.title})` : ''} replied to your outreach email:
+---
+${clip(text, 1500)}
+---
+Write your reply: warm, brief (40-110 words), plain words, sounds like a real person. Answer what they asked. If they offer a call, say you're glad to and that you're flexible on timing (don't invent specific times). If they say no or point elsewhere, thank them. Never invent facts about yourself.
+Sign off with just "${P.firstName}".
+Respond as JSON: {"body": "..."}`,
+    { body: '' }, { temperature: 0.4, maxTokens: 260 });
+  const body = String(out.body || '').trim();
+  if (body.split(/\s+/).length < 8) return null;
+  const status = config.email.autoReply ? 'scheduled' : 'draft';
+  db.prepare(`INSERT INTO emails (contact_id, kind, subject, body, status, scheduled_at, in_reply_to) VALUES (?, 'reply', ?, ?, ?, datetime('now'), ?)`)
+    .run(contact.id, `Re: ${String(subject || '').replace(/^re:\s*/i, '')}`, body, status, messageId || null);
+  log('email', `${status === 'draft' ? 'Drafted' : 'Queued'} a reply to ${contact.name || contact.email}`);
+  return status;
 }

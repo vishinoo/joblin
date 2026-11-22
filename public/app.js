@@ -23,7 +23,7 @@ const STATUS = {
   queued: ['Queued', ''], pending_approval: ['For review', 'accent'], approved: ['In queue', 'accent'], skipped: ['Skipped', ''],
   prepared: ['For review', 'accent'], duplicate: ['Already applied', ''], submitted: ['Applied', 'good'], needs_review: ['Needs a hand', 'warn'], manual: ['Apply yourself', 'warn'],
   failed: ['Failed', 'bad'], interview: ['Interview', 'good'], offer: ['Offer', 'good'], rejected: ['Rejected', 'bad'], withdrawn: ['Withdrawn', ''],
-  scheduled: ['Scheduled', ''], sent: ['Sent', 'accent'], replied: ['Replied', 'good'], bounced: ['Bounced', 'bad'], cancelled: ['Cancelled', ''],
+  scheduled: ['Scheduled', 'accent'], sent: ['Sent', 'good'], replied: ['Replied', 'reply'], bounced: ['Bounced', 'bad'], cancelled: ['Cancelled', ''], draft: ['Draft', 'warn'],
 };
 const pill = (s) => { const [l, c] = STATUS[s] || [s, '']; return `<span class="pill ${c}">${esc(l)}</span>`; };
 const scoreBadge = (n) => (n == null ? '' : `<span class="score ${n >= 70 ? 'hi' : n >= 45 ? 'mid' : 'lo'}" title="Fit score">${n}</span>`);
@@ -269,12 +269,16 @@ function ding() {
   } catch {}
 }
 
+let lastReplies = null;
 async function refreshSummary() {
   S = await api('/summary');
   const sys = S.system;
   $('#reviewBadge').hidden = !S.pendingReview; $('#reviewBadge').textContent = S.pendingReview;
 
   $('#qBadge').hidden = !S.pendingAnswers; $('#qBadge').textContent = S.pendingAnswers;
+  $('#oBadge').hidden = !S.newReplies; $('#oBadge').textContent = S.newReplies;
+  if (lastReplies !== null && S.newReplies > lastReplies) ding();
+  lastReplies = S.newReplies;
   if (lastPending !== null && S.pendingAnswers > lastPending) ding();
   lastPending = S.pendingAnswers;
   $('#sideFoot').innerHTML = `
@@ -561,45 +565,58 @@ VIEWS.review = async (view) => {
 
 // ---------- Applications ----------
 // Status is set by Joblin (Applied, Needs you, In queue…). You only mark outcomes: interview, offer, rejected, withdrawn, skip.
+// Applications holds what Joblin has actually tried to send. Jobs still in Review batch (or skipped there) live on that page.
+const ON_APPS = new Set(['approved', 'submitted', 'interview', 'offer', 'rejected', 'withdrawn', 'needs_review', 'manual', 'failed']);
 const APP_FILTERS = [
   ['all', 'All', () => true],
   ['applied', 'Applied', (s) => ['submitted', 'interview', 'offer'].includes(s)],
-  ['needs', 'Needs you', (s) => ['needs_review', 'manual', 'failed'].includes(s)],
-  ['queue', 'In queue', (s) => ['approved', 'queued'].includes(s)],
-  ['review', 'For review', (s) => s === 'pending_approval'],
-  ['skipped', 'Skipped', (s) => ['skipped', 'duplicate', 'withdrawn'].includes(s)],
-  ['rejected', 'Rejected', (s) => s === 'rejected'],
+  ['needs', 'Needs a hand', (s) => s === 'needs_review'],
+  ['manual', 'Apply yourself', (s) => s === 'manual'],
+  ['failed', 'Failed', (s) => s === 'failed'],
+  ['queue', 'Applying now', (s) => s === 'approved'],
+  ['interview', 'Interview', (s) => ['interview', 'offer'].includes(s)],
+  ['rejected', 'Rejected', (s) => ['rejected', 'withdrawn'].includes(s)],
 ];
+// Newest first, under Today / Yesterday / This week / This month / Earlier headings.
+const ageGroup = (t) => {
+  const d = new Date(String(t || '').replace(' ', 'T') + (String(t).includes('Z') ? '' : 'Z'));
+  const start = new Date(); start.setHours(0, 0, 0, 0);
+  const days = Math.floor((start - d) / 864e5) + 1;
+  return d >= start ? 'Today' : days <= 1 ? 'Yesterday' : days < 7 ? 'This week' : days < 31 ? 'This month' : 'Earlier';
+};
 const OUTCOMES = [['submitted', 'Applied'], ['interview', 'Interview'], ['offer', 'Offer'], ['rejected', 'Rejected'], ['withdrawn', 'Withdrawn'], ['skipped', 'Skip this job']];
 const statusClass = (s) => (['submitted', 'interview', 'offer'].includes(s) ? 'good' : ['approved', 'pending_approval', 'queued'].includes(s) ? 'accent' : ['needs_review', 'manual'].includes(s) ? 'warn' : ['failed', 'rejected'].includes(s) ? 'bad' : '');
 
 VIEWS.applications = async (view) => {
-  const [rows, { tracks }] = await Promise.all([api('/applications'), api('/tracks')]); const A = state.apps;
+  const [all, { tracks }] = await Promise.all([api('/applications'), api('/tracks')]); const A = state.apps;
   A.filter ??= 'all'; A.track ??= '';
-  // Filter by kind of job (the resume each one uses): only types that have applications are offered.
+  const stamp = (r) => String(r.applied_at || r.updated_at || '').replace('T', ' ').slice(0, 19);
+  const rows = all.filter((r) => ON_APPS.has(r.status)).sort((a, b) => String(stamp(b)).localeCompare(String(stamp(a))));
+  // Kind of job = the resumes you have (an accounting resume -> "Accounting"). Each application uses one of them.
   const label = (id) => tracks.find((t) => t.id === id)?.label || id;
-  const types = [...new Set(rows.map((r) => r.track).filter(Boolean))].sort((a, b) => label(a).localeCompare(label(b)));
+  const types = tracks.filter((t) => t.own || rows.some((r) => r.track === t.id)).map((t) => t.id);
   if (A.track && !types.includes(A.track)) A.track = '';
   const count = (k) => rows.filter((r) => APP_FILTERS.find((f) => f[0] === k)[2](r.status)).length;
-  const retryable = rows.filter((r) => ['skipped', 'failed', 'needs_review'].includes(r.status)).length;
+  const retryable = rows.filter((r) => ['failed', 'needs_review'].includes(r.status)).length;
   view.innerHTML = `
   <div class="toolbar">
     <div class="seg filters" id="af">${APP_FILTERS.map(([k, l]) => `<button data-f="${k}" class="${A.filter === k ? 'on' : ''}">${l}<span class="n">${count(k)}</span></button>`).join('')}</div>
-    <button class="btn" id="retryAll" style="margin-left:auto" ${retryable ? '' : 'disabled'} title="Send everything skipped, failed or stuck back through">Retry all${retryable ? ` (${retryable})` : ''}</button>
+    <button class="btn" id="retryAll" style="margin-left:auto" ${retryable ? '' : 'disabled'} title="Send everything that failed or got stuck back through">Retry all${retryable ? ` (${retryable})` : ''}</button>
   </div>
   <div class="toolbar"><input type="search" id="q" placeholder="Search company or role" value="${esc(A.q)}">
-    <select id="tf" aria-label="Kind of job" style="width:auto"><option value="">All kinds of jobs</option>${types.map((t) => `<option value="${esc(t)}" ${A.track === t ? 'selected' : ''}>${esc(label(t))} (${rows.filter((r) => r.track === t).length})</option>`).join('')}</select></div>
+    ${types.length > 1 ? `<div class="seg filters" id="tf" aria-label="Resume used">${[['', 'All resumes'], ...types.map((t) => [t, label(t)])].map(([k, l]) => `<button data-t="${esc(k)}" class="${A.track === k ? 'on' : ''}">${esc(l)}<span class="n">${k ? rows.filter((r) => r.track === k).length : rows.length}</span></button>`).join('')}</div>` : ''}</div>
   <div class="panel tablewrap" id="appBox"><div class="selbar"><label style="display:flex;gap:8px;align-items:center"><input type="checkbox" data-pickall>Select all</label><span class="muted" data-count></span>
     <div style="margin-left:auto;display:flex;gap:8px;align-items:center"><button class="btn sm" data-needsel id="bRetry">Try again</button>
       <select id="bMark" data-needsel aria-label="Mark selected as" style="width:auto"><option value="">Mark as…</option>${OUTCOMES.map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select>
       <button class="btn sm ghost danger" data-needsel id="bRemove">Remove</button></div></div>
-    <table><thead><tr><th style="width:28px"></th><th>Role</th><th>Fit</th><th>Status</th><th>Documents</th><th>Updated</th></tr></thead><tbody id="rows"></tbody></table></div>`;
+    <table><thead><tr><th style="width:28px"></th><th>Role</th><th>Fit</th><th>Status</th><th>Documents</th><th>When</th></tr></thead><tbody id="rows"></tbody></table></div>`;
   let picked = () => [];
   const docs = (r) => r.resume_path ? `<a class="link" target="_blank" href="${fileUrl(r.resume_path)}">Resume</a> · <a class="link" target="_blank" href="${fileUrl(r.cover_letter_path)}">Letter</a>` : '—';
   const draw = () => {
     const pass = APP_FILTERS.find((f) => f[0] === A.filter)[2];
     const f = rows.filter((r) => pass(r.status) && (!A.track || r.track === A.track) && (!A.q || `${r.company} ${r.title}`.toLowerCase().includes(A.q.toLowerCase())));
-    $('#rows').innerHTML = f.map((r) => `<tr>
+    let lastGroup = '';
+    $('#rows').innerHTML = f.map((r) => { const g = ageGroup(stamp(r)); const head = g !== lastGroup ? `<tr class="grouprow"><td colspan="6">${g}</td></tr>` : ''; lastGroup = g; return `${head}<tr>
       <td><input type="checkbox" data-pick="${r.id}" aria-label="Select ${esc(r.title)}"></td>
       <td><div style="display:flex;gap:12px">${mono(r.company)}<div><a class="link" href="${esc(r.apply_url || r.linkedin_url)}" target="_blank" rel="noopener">${esc(r.title)}</a><div class="sub">${esc(r.company)}${r.location ? ` · ${esc(r.location)}` : ''}</div>${r.notes && !['submitted'].includes(r.status) ? `<div class="sub">${esc(r.notes.slice(0, 160))}</div>` : ''}</div></div></td>
       <td>${scoreBadge(r.match_score)}</td>
@@ -607,7 +624,7 @@ VIEWS.applications = async (view) => {
         <select class="mark" data-id="${r.id}" aria-label="Mark as"><option value="">Mark as…</option>${OUTCOMES.filter(([k]) => k !== r.status).map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select></div></td>
       <td class="sub" style="white-space:nowrap">${r.proof_path ? `<div><a class="link" target="_blank" href="${fileUrl(r.proof_path, Date.now())}">${r.status === 'submitted' ? 'Confirmation' : 'What happened'}</a></div>` : ''}<div>${docs(r)}</div>
         ${['needs_review', 'failed', 'skipped'].includes(r.status) ? `<div style="margin-top:6px"><button class="btn sm" data-retry="${r.id}">${r.status === 'skipped' ? 'Apply anyway' : 'Try again'}</button></div>` : ''}</td>
-      <td class="sub">${when(r.updated_at)}</td></tr>`).join('') || `<tr><td colspan="6"><div class="empty"><b>Nothing here</b>${A.filter === 'all' ? 'Tell Joblin what to look for and applications will show up here.' : 'No applications in this group.'}</div></td></tr>`;
+      <td class="sub">${when(stamp(r))}</td></tr>`; }).join('') || `<tr><td colspan="6"><div class="empty"><b>Nothing here</b>${A.filter === 'all' ? 'Tell Joblin what to look for and applications will show up here.' : 'No applications in this group.'}</div></td></tr>`;
     $$('[data-retry]').forEach((b) => b.onclick = async () => {
       const r = await api(`/applications/${b.dataset.retry}/retry`, { method: 'POST', body: {} });
       toast(r.started ? 'Joblin is applying in the background' : 'In the queue — it goes right after the current one'); refreshSummary(); render();
@@ -638,10 +655,10 @@ VIEWS.applications = async (view) => {
   };
   $$('#af button').forEach((b) => b.onclick = () => { A.filter = b.dataset.f; $$('#af button').forEach((x) => x.classList.toggle('on', x === b)); draw(); });
   $('#q').oninput = (e) => { A.q = e.target.value; draw(); };
-  $('#tf').onchange = (e) => { A.track = e.target.value; draw(); };
+  $$('#tf button').forEach((b) => b.onclick = () => { A.track = b.dataset.t; $$('#tf button').forEach((x) => x.classList.toggle('on', x === b)); draw(); });
   $('#retryAll').onclick = async () => {
     if (!(await ask({ title: `Retry ${retryable} application${retryable === 1 ? '' : 's'}?`, image: '/img/joblin-working.png', ok: 'Retry all',
-      body: 'Everything skipped, failed or stuck goes back in the queue and Joblin applies in the background. Applications waiting on one of your answers stay put until you answer.' }))) return;
+      body: 'Everything that failed or got stuck goes back in the queue and Joblin applies in the background. Applications waiting on one of your answers stay put until you answer.' }))) return;
     const r = await api('/applications/retry-all', { method: 'POST', body: {} });
     toast(`${r.count} back in the queue`); refreshSummary(); render();
   };
@@ -649,41 +666,103 @@ VIEWS.applications = async (view) => {
 };
 
 // ---------- Outreach ----------
+// Times are stored in UTC ("2026-11-22 17:00:00"); the page shows and edits them in your local time.
+const utcDate = (t) => new Date(String(t || '').replace(' ', 'T') + (/[zZ]|[+-]\d\d:?\d\d$/.test(String(t)) ? '' : 'Z'));
+const toLocalInput = (t) => { const d = utcDate(t); if (isNaN(d)) return ''; const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; };
+const fromLocalInput = (v) => new Date(v).toISOString().slice(0, 19).replace('T', ' ');
+const exactTime = (t) => utcDate(t).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+const EMAIL_FILTERS = [
+  ['', 'All', () => true],
+  ['draft', 'Drafts', (r) => r.status === 'draft'],
+  ['scheduled', 'Scheduled', (r) => r.status === 'scheduled'],
+  ['sent', 'Sent', (r) => r.status === 'sent'],
+  ['replied', 'Replies', (r) => r.status === 'replied'],
+  ['problems', 'Problems', (r) => ['bounced', 'failed'].includes(r.status)],
+];
+const EMAIL_KIND = { intro: 'Intro', followup: 'Follow-up', reply: 'Your reply' };
+
 VIEWS.outreach = async (view) => {
   const rows = await api('/emails'); const sys = S.system; if (!SET) await loadSettings();
+  const O = (state.out ??= { f: '', q: '', open: null });
+  const E = SET.email || {};
+  const count = (k) => rows.filter(EMAIL_FILTERS.find((f) => f[0] === k)[2]).length;
+  const nDraft = count('draft');
   view.innerHTML = `
   <div class="toolbar">
-    <div class="seg" id="ef">${[['', 'All'], ['scheduled', 'Scheduled'], ['sent', 'Sent'], ['replied', 'Replied'], ['bounced', 'Bounced']].map(([k, l]) => `<button data-f="${k}" class="${state.emailFilter === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+    <div class="seg filters" id="ef">${EMAIL_FILTERS.map(([k, l]) => `<button data-f="${k}" class="${O.f === k ? 'on' : ''}">${l}<span class="n">${count(k)}</span></button>`).join('')}</div>
     <span class="muted">${S.emails.today} of ${S.emails.cap} sent today</span>
     <button class="btn sm" id="findPeople" style="margin-left:auto" title="Look up recruiters and team leads for applications you've sent">Find people</button>
     <button class="btn sm" id="pause">${sys.emailPaused ? 'Resume sending' : 'Pause sending'}</button></div>
+  <div class="toolbar"><input type="search" id="oq" placeholder="Search person, company, role or email" value="${esc(O.q)}">
+    ${nDraft ? `<button class="btn sm primary" id="sendDrafts">Send all ${nDraft} draft${nDraft === 1 ? '' : 's'}</button>` : ''}
+    <span class="muted" style="font-size:12.5px">${E.autoSend ? 'Auto-send is on: new emails go out by themselves.' : 'Auto-send is off: new emails wait here as drafts.'} <a class="link" href="#/settings" id="toEmailSet">Change</a></span></div>
   ${!rows.length ? `<section class="panel hello" style="margin-bottom:14px"><img src="/img/joblin-mailbox.png" alt="Joblin looking into an empty mailbox">
-    <div><h2>No outreach yet</h2><div class="muted">After an application goes in, Joblin emails the recruiters or hiring managers for that job, then follows up once if they don't reply.</div>
+    <div><h2>No outreach yet</h2><div class="muted">After an application goes in, Joblin finds the recruiters and team leads for that job and writes them a short note. Ask in the chat for “more people at <i>company</i>” any time.</div>
     <div class="checks">
       <div><span class="dot ${sys.gmail ? 'ok' : ''}"></span>${sys.gmail ? `Sending from ${esc(sys.gmailUser)}` : '<a class="link" href="#/settings" id="toInteg">Connect Gmail</a> so Joblin can send'}</div>
       <div><span class="dot ${S.submitted ? 'ok' : ''}"></span>${S.submitted} applications sent — emails start after each one</div>
       <div><span class="dot ${S.contacts ? 'ok' : ''}"></span>${S.contacts} people found. ${sys.linkedin?.connected ? 'Joblin finds recruiters and team leads on LinkedIn and works out their email from the company’s own address pattern.' : '<a class="link" href="#/settings">Connect LinkedIn</a> so Joblin can find recruiters and team leads.'}</div>
-    </div></div></section>` : !sys.gmail ? `<div class="panel" style="padding:14px 18px;margin-bottom:14px">Emails are queued but won't send until you connect Gmail. <a class="link" href="#/settings" id="toInteg">Connect Gmail</a></div>` : ''}
-  <div class="panel tablewrap" ${rows.length ? '' : 'hidden'}><table><thead><tr><th>Contact</th><th>Company</th><th>Email</th><th>Status</th><th>When</th><th></th></tr></thead><tbody>
-  ${rows.filter((r) => !state.emailFilter || r.status === state.emailFilter).map((r) => `<tr>
-    <td>${r.linkedin ? `<a class="link" href="${esc(r.linkedin)}" target="_blank" rel="noopener">${esc(r.name || '—')}</a>` : esc(r.name || '—')}<div class="sub">${esc(r.email)}${r.source === 'guessed' ? ' · likely address' : r.source === 'pattern' ? ' · their address pattern' : r.source === 'hunter' ? ' · verified' : ''}</div></td>
-    <td>${esc(r.company)}<div class="sub">${esc(r.title)}</div></td>
-    <td><details><summary class="sub" style="cursor:pointer">${r.kind === 'followup' ? 'Follow-up' : 'Intro'}: ${esc(r.subject)}</summary><div class="sub" style="white-space:pre-wrap;margin-top:8px;max-width:520px">${esc(r.body)}</div></details>
-      ${r.reply_snippet ? `<div class="sub" style="margin-top:6px;color:var(--ink-2)">“${esc(r.reply_snippet.slice(0, 160))}”</div>` : ''}${r.error ? `<div class="sub" style="color:var(--bad)">${esc(r.error)}</div>` : ''}</td>
-    <td>${pill(r.status)}</td><td class="sub">${when(r.replied_at || r.sent_at || r.scheduled_at)}</td>
-    <td>${r.status === 'scheduled' ? `<button class="btn sm ghost" data-cancel="${r.id}">Cancel</button>` : ''}</td></tr>`).join('') || `<tr><td colspan="6"><div class="empty"><b>No outreach yet</b>Emails are written after each application goes in.</div></td></tr>`}
-  </tbody></table></div>`;
-  $$('#ef button').forEach((b) => b.onclick = () => { state.emailFilter = b.dataset.f; render(); });
+    </div></div></section>` : !sys.gmail ? `<div class="panel" style="padding:14px 18px;margin-bottom:14px">Emails won't send until you connect Gmail. <a class="link" href="#/settings" id="toInteg">Connect Gmail</a></div>` : ''}
+  <div class="panel tablewrap" ${rows.length ? '' : 'hidden'}><table class="outtable"><thead><tr><th>Person</th><th>Company</th><th>Email</th><th>Status</th><th>When</th><th></th></tr></thead><tbody id="orows"></tbody></table></div>`;
+
+  const whenCell = (r) => r.status === 'scheduled' || r.status === 'draft'
+    ? (utcDate(r.scheduled_at) <= new Date() ? `<span title="${esc(exactTime(r.scheduled_at))}">${r.status === 'draft' ? 'When you send it' : 'Next sending slot'}</span>` : esc(exactTime(r.scheduled_at)))
+    : r.status === 'replied' ? when(r.replied_at) : r.sent_at ? esc(exactTime(r.sent_at)) : '—';
+  const draw = () => {
+    const pass = EMAIL_FILTERS.find((f) => f[0] === O.f)[2];
+    const q = O.q.toLowerCase();
+    const f = rows.filter((r) => pass(r) && (!q || `${r.name} ${r.email} ${r.company} ${r.title} ${r.subject} ${r.person_title}`.toLowerCase().includes(q)));
+    $('#orows').innerHTML = f.map((r) => {
+      const editable = ['draft', 'scheduled'].includes(r.status);
+      return `<tr class="${r.status === 'replied' && !r.seen ? 'unread' : ''}">
+      <td>${r.linkedin ? `<a class="link" href="${esc(r.linkedin)}" target="_blank" rel="noopener">${esc(r.name || '—')}</a>` : esc(r.name || '—')}
+        <div class="sub">${esc(r.person_title || '')}</div>
+        ${r.why ? `<div class="sub why" title="Why Joblin picked them">${esc(r.why)}</div>` : ''}</td>
+      <td>${esc(r.company)}<div class="sub">${esc(r.title)}</div></td>
+      <td><div class="sub">${esc(r.email)}${r.source === 'guessed' ? ' · likely address' : r.source === 'pattern' ? ' · their address pattern' : r.source === 'hunter' ? ' · verified' : ''}</div>
+        <button class="linkbtn" data-open="${r.id}">${EMAIL_KIND[r.kind] || 'Email'}: ${esc(r.subject)}</button>
+        ${r.reply_snippet ? `<div class="replybox"><b>${esc((r.name || 'They').split(' ')[0])} replied:</b> ${esc(r.reply_snippet.slice(0, 400))}</div>` : ''}
+        ${r.error ? `<div class="sub" style="color:var(--bad)">${esc(r.error)}</div>` : ''}
+        ${O.open === r.id ? (editable ? `<div class="emailedit">
+            <label class="f">Subject<input type="text" data-subj value="${esc(r.subject)}"></label>
+            <label class="f">Message<textarea data-body rows="9">${esc(r.body)}</textarea></label>
+            <label class="f">Send at <span class="muted" style="font-weight:400">(your time; it waits for your sending hours)</span><input type="datetime-local" data-at value="${toLocalInput(r.scheduled_at)}"></label>
+            <div style="display:flex;gap:8px"><button class="btn sm" data-save="${r.id}">Save</button>${r.status === 'draft' ? `<button class="btn sm primary" data-send="${r.id}">Save and send</button>` : ''}<button class="btn sm ghost" data-open="${r.id}">Close</button></div></div>`
+          : `<div class="sub" style="white-space:pre-wrap;margin-top:8px;max-width:560px">${esc(r.body)}</div>`) : ''}</td>
+      <td>${pill(r.status)}</td><td class="sub">${whenCell(r)}</td>
+      <td style="white-space:nowrap">${r.status === 'draft' ? `<button class="btn sm primary" data-send="${r.id}">Send</button> ` : ''}${editable ? `<button class="btn sm ghost" data-cancel="${r.id}">${r.status === 'draft' ? 'Discard' : 'Cancel'}</button>` : ''}</td></tr>`;
+    }).join('') || `<tr><td colspan="6"><div class="empty"><b>Nothing here</b>${O.q ? 'No emails match your search.' : 'No emails in this group.'}</div></td></tr>`;
+    $$('[data-open]').forEach((b) => b.onclick = () => { const id = +b.dataset.open; O.open = O.open === id ? null : id; draw(); });
+    const fields = (id) => { const box = $(`[data-save="${id}"]`)?.closest('.emailedit'); if (!box) return {}; const at = $('[data-at]', box).value;
+      return { subject: $('[data-subj]', box).value, body: $('[data-body]', box).value, scheduled_at: at ? fromLocalInput(at) : undefined }; };
+    $$('[data-save]').forEach((b) => b.onclick = async () => { await api(`/emails/${b.dataset.save}`, { method: 'PUT', body: fields(b.dataset.save) }); toast('Saved'); O.open = null; render(); });
+    $$('[data-send]').forEach((b) => b.onclick = async () => {
+      const id = b.dataset.send; const x = fields(id); if (x.subject !== undefined) await api(`/emails/${id}`, { method: 'PUT', body: x });
+      await api('/emails/send', { method: 'POST', body: { ids: [+id] } }); toast(sys.gmail ? 'Queued — it goes out in your sending hours' : 'Queued — connect Gmail so it can send'); O.open = null; refreshSummary(); render();
+    });
+    $$('[data-cancel]').forEach((b) => b.onclick = async () => { await api(`/emails/${b.dataset.cancel}/cancel`, { method: 'POST', body: {} }); refreshSummary(); render(); });
+  };
+  $$('#ef button').forEach((b) => b.onclick = async () => {
+    O.f = b.dataset.f; $$('#ef button').forEach((x) => x.classList.toggle('on', x === b)); draw();
+    if (O.f === 'replied' && S.newReplies) { await api('/emails/seen', { method: 'POST', body: {} }); refreshSummary(); }
+  });
+  $('#oq').oninput = (e) => { O.q = e.target.value; draw(); };
+  $('#sendDrafts')?.addEventListener('click', async () => {
+    if (!(await ask({ title: `Send ${nDraft} draft${nDraft === 1 ? '' : 's'}?`, body: 'They go out one at a time during your sending hours, a few minutes apart.', ok: 'Send them' }))) return;
+    const r = await api('/emails/send', { method: 'POST', body: {} }); toast(`${r.count} queued`); refreshSummary(); render();
+  });
+  $('#toEmailSet').onclick = () => (state.settingsTab = 'email');
   $('#findPeople').onclick = async (ev) => {
     const b = ev.currentTarget; b.disabled = true; b.textContent = 'Finding people…';
     const r = await api('/outreach/find', { method: 'POST', body: {} });
-    if (!r.started) { toast(r.running ? 'Already looking — new people show up here as they’re found' : 'Every sent application already has people'); b.disabled = false; b.textContent = 'Find people'; return; }
+    if (!r.started) { toast(r.running ? 'Already looking — new people show up here as they’re found' : 'Every sent application already has people. Ask in the chat for “more people at <company>”.'); b.disabled = false; b.textContent = 'Find people'; return; }
     toast(`Looking up people for ${r.count} application${r.count === 1 ? '' : 's'} — this takes a few minutes`);
     const t = setInterval(async () => { const f = await api('/outreach/finding'); if (!f.running) { clearInterval(t); toast('Done finding people'); if (route() === 'outreach') render(); } }, 5000);
   };
   $('#pause').onclick = async () => { await api('/email/pause', { method: 'POST', body: { paused: !sys.emailPaused } }); await refreshSummary(); render(); };
   $('#toInteg')?.addEventListener('click', () => (state.settingsTab = 'integrations'));
-  $$('[data-cancel]').forEach((b) => b.onclick = async () => { await api(`/emails/${b.dataset.cancel}/cancel`, { method: 'POST', body: {} }); render(); });
+  draw();
+  if (O.f === 'replied' && S.newReplies) api('/emails/seen', { method: 'POST', body: {} }).then(refreshSummary);
 };
 
 // ---------- Tasks ----------
@@ -998,9 +1077,24 @@ SETTINGS.email = async (el) => {
     <div class="srow"><div class="l"><b>Follow up after</b><span>One polite follow-up if nobody replies. Cancelled automatically when they do.</span></div><div class="ctl" style="display:flex;gap:6px;align-items:center"><input type="number" id="fu" min="1" max="10" value="${Math.min(10, E.followUpAfterDays)}" style="width:70px"> days</div></div>
     <div class="srow"><div class="l"><b>People per job</b><span>Maximum contacts emailed for one posting.</span></div><div class="ctl"><input type="number" id="per" min="1" max="5" value="${E.maxContactsPerJob}" style="width:70px"></div></div>
     <div class="srow"><div class="l"><b>Email guessed addresses</b><span>When no address is public, try first.last@company. Some will bounce.</span></div><div class="ctl">${sw('guess', E.useGuessedEmails)}</div></div>
-  </section><div><button class="btn primary" id="saveE">Save email settings</button></div>`;
+  </section>
+  <section class="panel panel-b"><div class="panel-h" style="padding:0 0 6px"><h2>Who decides</h2></div>
+    <div class="srow"><div class="l"><b>Send outreach automatically</b><span>On: Joblin emails the people it picks as soon as you apply. Off: each email waits on Outreach as a draft until you press Send. Joblin picks people who work at the company now and either recruit for this kind of role (campus, early-career, talent) or work on the team the role is in — Outreach shows why for each person.</span></div><div class="ctl">${sw('autoSend', E.autoSend)}</div></div>
+    <div class="srow"><div class="l"><b>Answer replies automatically</b><span>When someone writes back, Joblin drafts a short, friendly answer in your voice. On: it sends it. Off: it waits on Outreach for you to check. Replies always show a badge in the sidebar.</span></div><div class="ctl">${sw('autoReply', E.autoReply)}</div></div>
+  </section>
+  <section class="panel panel-b"><div class="panel-h" style="padding:0 0 10px"><h2>Your emails</h2>
+      <div class="right"><div class="seg" id="etKind"><button data-k="intro" class="on">First email</button><button data-k="followup">Follow-up</button></div> <button class="btn sm ghost" id="etReset">Reset to Joblin’s version</button></div></div>
+    <p class="muted" style="font-size:13px;margin:0 0 8px;max-width:72ch">Write it the way you'd write it. The first line is the subject. Fields in double braces are filled in for each person: ${['first_name', 'company', 'role', 'personal_line', 'track_pitch', 'name', 'phone', 'linkedin_line'].map((x) => `<code>{{${x}}}</code>`).join(' ')}. <code>{{personal_line}}</code> is one sentence Joblin writes about what that company works on.</p>
+    <textarea id="etText" rows="14" style="width:100%;font-family:inherit;font-size:14px;line-height:1.5"></textarea></section>
+  <div><button class="btn primary" id="saveE">Save email settings</button></div>`;
+  const T = { intro: E.templates?.intro || E.defaultTemplates?.intro || '', followup: E.templates?.followup || E.defaultTemplates?.followup || '' };
+  let etk = 'intro';
+  $('#etText').value = T[etk];
+  $$('#etKind button').forEach((b) => b.onclick = () => { T[etk] = $('#etText').value; etk = b.dataset.k; $$('#etKind button').forEach((x) => x.classList.toggle('on', x === b)); $('#etText').value = T[etk]; });
+  $('#etReset').onclick = () => { $('#etText').value = E.defaultTemplates?.[etk] || ''; $('#etText').dispatchEvent(new Event('input', { bubbles: true })); };
+  const tpl = () => { T[etk] = $('#etText').value; const o = {}; for (const k of ['intro', 'followup']) o[k] = T[k].trim() === (E.defaultTemplates?.[k] || '').trim() ? '' : T[k]; return o; };
   const cl = (v, lo, hi, d) => Math.max(lo, Math.min(hi, Number(v) || d));
-  $('#saveE').onclick = () => saveSettings({ email: { enabled: $('#emOn').checked, dailyCap: cl($('#cap').value, 1, 60, 40), sendWindow: { startHour: cl($('#h1').value, 0, 23, 8), endHour: cl($('#h2').value, 1, 24, 17) }, followUpAfterDays: cl($('#fu').value, 1, 10, 5), maxContactsPerJob: cl($('#per').value, 1, 3, 2), minGapMinutes: 2, maxGapMinutes: 6, useGuessedEmails: $('#guess').checked } }, 'Email settings saved');
+  $('#saveE').onclick = () => saveSettings({ email: { enabled: $('#emOn').checked, dailyCap: cl($('#cap').value, 1, 60, 40), sendWindow: { startHour: cl($('#h1').value, 0, 23, 8), endHour: cl($('#h2').value, 1, 24, 17) }, followUpAfterDays: cl($('#fu').value, 1, 10, 5), maxContactsPerJob: cl($('#per').value, 1, 5, 2), minGapMinutes: 2, maxGapMinutes: 6, useGuessedEmails: $('#guess').checked, autoSend: $('#autoSend').checked, autoReply: $('#autoReply').checked, templates: tpl() } }, 'Email settings saved');
 };
 
 // ---------- Onboarding ----------
@@ -1446,7 +1540,7 @@ render();
 // when something on it changed — but never while you're typing, choosing, or reading a dialog.
 let lastSig = '';
 const LIVE = ['dashboard', 'review', 'applications', 'answers', 'memory', 'outreach'];
-const sig = () => JSON.stringify([S.byStatus, S.pendingAnswers, S.pendingReview, S.submitted, route() === 'dashboard' ? S.system.workers : null]);
+const sig = () => JSON.stringify([S.byStatus, S.pendingAnswers, S.pendingReview, S.submitted, S.newReplies, S.drafts, S.emails?.sent, S.emails?.queued, route() === 'dashboard' ? S.system.workers : null]);
 (async function tick() {
   try {
     await refreshSummary();
