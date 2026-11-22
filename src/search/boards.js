@@ -27,7 +27,7 @@ export const DEFAULT_BOARDS = [
   'ashby:georgian', 'lever:policyme', 'lever:plooto',
 ];
 
-const EARLY = /\b(intern|internship|co-?op|new ?grad|graduate|university|student|campus|junior|jr\.?|entry[- ]level|early[- ]career|summer analyst|analyst program|apprentice)\b/i;
+export const EARLY = /\b(interns?|internships?|co-?ops?|new ?grads?|graduates?|university|students?|campus|junior|jr\.?|entry[- ]level|early[- ]career|summer analyst|analyst program|apprentice)\b/i;
 const FIN_TITLE = /financ|invest|banking|analyst|equity|capital|asset|wealth|treasury|accounting|audit|fp&a|valuation|m&a|credit|portfolio|trading|trader|quant|risk|venture/i;
 const strip = (html) => String(html || '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ')
   .replace(/<(br|\/p|\/li|\/h\d|\/div)>/gi, '\n').replace(/<li[^>]*>/gi, '• ').replace(/<[^>]+>/g, ' ').replace(/[ \t]+/g, ' ').replace(/\n\s+/g, '\n').trim();

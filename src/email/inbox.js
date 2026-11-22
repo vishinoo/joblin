@@ -64,16 +64,35 @@ async function handleMessage({ from, subject, text }, companies) {
     }
     return;
   }
-  const hay = `${from} ${subject} ${text.slice(0, 600)}`.toLowerCase();
-  const job = companies.find((c) => (c.company_domain && from.endsWith(c.company_domain)) || (c.company.length > 3 && hay.includes(c.company.toLowerCase())));
+  const job = matchJob(from, subject, text, companies);
   if (!job) return;
+  // The model's label only counts when the email itself says so in plain words (no "rejections" from newsletters).
   const { category, summary } = await classify(subject, text, job.company);
-  const map = { rejected: 'rejected', interview: 'interview', offer: 'offer' };
-  if (map[category]) {
-    db.prepare(`UPDATE applications SET status=?, notes=?, updated_at=datetime('now') WHERE job_id=?`).run(map[category], summary, job.id);
-    log('status', `${job.company}: ${category} — ${summary}`);
-    if (category !== 'rejected') addTask({ title: `${category === 'offer' ? 'Offer' : 'Interview'}: ${job.title} @ ${job.company}`, detail: summary, url: 'https://mail.google.com', priority: 1, jobId: job.id });
-  }
+  const said = `${subject}\n${text.slice(0, 2500)}`;
+  const EVIDENCE = {
+    rejected: /unfortunately|not (be )?(moving|move) forward|decided to (pursue|move forward with) other|not been selected|won.t be (moving|proceeding)|regret to inform|position has been filled|other candidates/i,
+    interview: /interview|phone screen|schedule (a|some) time|your availability|next steps? in (our|the) (hiring|interview) process|online assessment|coding (challenge|assessment)|hirevue|codesignal|hackerrank/i,
+    offer: /offer letter|pleased to offer|extend (you )?an offer|job offer/i,
+  };
+  if (!EVIDENCE[category]?.test(said)) return;
+  db.prepare(`UPDATE applications SET status=?, notes=?, updated_at=datetime('now') WHERE job_id=?`).run(category, `From your inbox: ${subject}`.slice(0, 300), job.id);
+  log('status', `${job.company}: ${category} — “${subject}” (from ${from})`);
+  if (category !== 'rejected') addTask({ title: `${category === 'offer' ? 'Offer' : 'Interview'}: ${job.title} @ ${job.company}`, detail: summary, url: 'https://mail.google.com', priority: 1, jobId: job.id });
+}
+
+// Which application an email is about. Only emails from the company (its domain) or from a hiring system
+// (Greenhouse, Lever, Workday…) count, and the company has to be named as a whole word in the sender or subject.
+// Newsletters and promos that merely mention a company name never match.
+const HIRING_SENDERS = /greenhouse|lever\.co|ashbyhq|myworkday|workday|icims|taleo|smartrecruiters|jobvite|successfactors|bamboohr|workable|recruitee|hirevue|codesignal|hackerrank|jobs-noreply@linkedin|careers|recruit|talent|hiring|no-?reply/i;
+const word = (name) => new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+export function matchJob(from, subject, text, companies) {
+  const fromCo = companies.find((c) => c.company_domain && from.toLowerCase().endsWith(`@${c.company_domain}`) || (c.company_domain && from.toLowerCase().endsWith(`.${c.company_domain}`)));
+  if (fromCo) return fromCo;
+  if (!HIRING_SENDERS.test(from)) return null;
+  const named = companies.filter((c) => c.company.length > 2 && (word(c.company).test(subject) || word(c.company).test(from.split('@')[0])));
+  if (named.length === 1) return named[0];
+  // Several jobs at the same company: the one whose title is in the email.
+  return named.find((c) => text.toLowerCase().includes(c.title.toLowerCase().slice(0, 30))) || named[0] || null;
 }
 
 const activeCompanies = () => db.prepare(`SELECT j.id, j.company, j.title, j.company_domain FROM jobs j JOIN applications a ON a.job_id = j.id

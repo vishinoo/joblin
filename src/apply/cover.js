@@ -9,6 +9,7 @@ import { config } from '../core/config.js';
 import { generateJSON, clip } from '../core/llm.js';
 import { templateFileFor, tracks } from '../you/tracks.js';
 import { rolePrefs, roleKey } from '../you/profile.js';
+import { fitScore } from './score.js';
 
 const STOP = new Set('the and for with you our are will that this from your have who can all work team role able into about strong including such using their they them its not may more other also what we us an or of to in on at by as be is a it this'.split(' '));
 const tokens = (s) => (String(s).toLowerCase().match(/[a-z][a-z+#.&/-]{1,}/g) || []).filter((w) => !STOP.has(w) && w.length > 2);
@@ -261,7 +262,8 @@ Return JSON: {"paragraph": "..."}`,
 
 export async function writeCoverLetter(job, track, resume, analysis, { precise } = {}) {
   analysis ??= await analyzeJob(job);
-  const { pairs, score } = matchEvidence(analysis, resume, job, track);
+  const { pairs, score: raw } = matchEvidence(analysis, resume, job, track);
+  const score = fitScore(raw, job, track); // shown on the job; also decides when a precise letter is worth writing
   const matches = pairs.map((p) => ({ requirement: p.requirement, evidence: p.evidence.text, org: p.evidence.org, strength: p.evidence.score }));
   const C = config.coverLetter || {};
   const wantPrecise = precise ?? (C.alwaysPrecise || score >= (C.preciseMinScore ?? 75));

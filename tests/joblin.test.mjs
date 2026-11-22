@@ -102,3 +102,12 @@ test('bases anywhere in the world: an Austin job gets your Texas base', () => {
   assert.equal(homeFor('Calgary, Alberta, Canada').city, 'Edmonton');
   config.profile.bases = ['Edmonton, AB', 'Vancouver, BC'];
 });
+
+test('inbox: newsletters that mention a company never count as replies', async () => {
+  const { matchJob } = await import('../src/email/inbox.js');
+  const jobs = [{ id: 1, company: 'Later', title: 'AI Automation Co-op', company_domain: 'later.com' }, { id: 2, company: 'Lyft', title: 'Business Systems Engineer Intern', company_domain: '' }];
+  assert.equal(matchJob('news@oilprice.com', 'Energy stocks later this week', 'see you later', jobs), null);
+  assert.equal(matchJob('deals@lyft.com', 'Ride promo', 'Lyft promo', jobs), null); // no domain on file, not a hiring sender
+  assert.equal(matchJob('no-reply@greenhouse.io', 'Your application to Lyft', 'Business Systems Engineer Intern', jobs)?.id, 2);
+  assert.equal(matchJob('recruiting@later.com', 'Next steps', '', jobs)?.id, 1);
+});

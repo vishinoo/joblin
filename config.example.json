@@ -126,7 +126,8 @@
     "exampleCompany": "",
     "exampleRole": "",
     "rewriteOpening": true,
-    "tailorParagraphs": true
+    "tailorParagraphs": true,
+    "preciseMinScore": 85
   },
   "resumes": {
     "swe": {

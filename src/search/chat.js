@@ -3,7 +3,7 @@ import { noteFocus } from './linkedin.js';
 // Chat with Joblin: describe what you want ("finance internships in London at Barclays and Wise")
 // and it updates your search, remembers your preferences, and starts a search when you ask.
 import { config } from '../core/config.js';
-import { db, log } from '../core/db.js';
+import { db, log, kv } from '../core/db.js';
 import { generateJSON } from '../core/llm.js';
 import { addFact, listFacts } from '../you/memory.js';
 import { tracks, scoreTracks } from '../you/tracks.js';
@@ -19,14 +19,25 @@ const slugs = (name) => {
   const words = base.split(/\s+/).filter((w) => !/^(inc|ltd|llc|corp|corporation|company|co|the|group|technologies)$/.test(w));
   return [...new Set([words.join(''), words.join('-'), words[0], `${words.join('')}hq`, `${words.join('')}inc`].filter(Boolean))];
 };
-async function probe(url) { try { const r = await fetch(url, { signal: AbortSignal.timeout(8000) }); return r.ok ? r.json() : null; } catch { return null; } }
+// Only the response code matters, so the (sometimes huge) job lists aren't downloaded here.
+async function probe(url, ok) {
+  try { const r = await fetch(url, { signal: AbortSignal.timeout(5000) }); return r.ok && ok(await r.json()); } catch { return false; }
+}
+// A company's Greenhouse, Ashby or Lever board, e.g. "greenhouse:stripe" — or null. All name variations are tried
+// at once (not one after another) and the answer, including "none", is remembered for 30 days.
 export async function resolveCompany(name) {
-  for (const slug of slugs(name)) {
-    const gh = await probe(`https://boards-api.greenhouse.io/v1/boards/${slug}/jobs`); if (gh?.jobs) return `greenhouse:${slug}`;
-    const ab = await probe(`https://api.ashbyhq.com/posting-api/job-board/${slug}`); if (ab?.jobs) return `ashby:${slug}`;
-    const lv = await probe(`https://api.lever.co/v0/postings/${slug}?mode=json&limit=1`); if (Array.isArray(lv)) return `lever:${slug}`;
-  }
-  return null;
+  const key = `board:${String(name).toLowerCase()}`;
+  const hit = kv.get(key, null);
+  if (hit && Date.now() - hit.at < 30 * 864e5) return hit.board;
+  const tries = slugs(name).flatMap((slug) => [
+    [`greenhouse:${slug}`, `https://boards-api.greenhouse.io/v1/boards/${slug}/jobs`, (j) => Array.isArray(j?.jobs)],
+    [`ashby:${slug}`, `https://api.ashbyhq.com/posting-api/job-board/${slug}`, (j) => Array.isArray(j?.jobs)],
+    [`lever:${slug}`, `https://api.lever.co/v0/postings/${slug}?mode=json&limit=1`, (j) => Array.isArray(j)],
+  ]);
+  const ok = await Promise.all(tries.map(([, url, test]) => probe(url, test)));
+  const board = tries.find((_, i) => ok[i])?.[0] || null; // first in priority order: full name before shorter guesses
+  kv.set(key, { board, at: Date.now() });
+  return board;
 }
 
 // ---------- Plain parsing of a request ("finance internships in Edmonton at ATB and Stantec") ----------

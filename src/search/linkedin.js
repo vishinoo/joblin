@@ -4,7 +4,7 @@ import { config, jitter, activeSearch } from '../core/config.js';
 import { db, log, kv, findDuplicateJob, addTask } from '../core/db.js';
 import { detectATS } from '../apply/apply.js';
 import { resolveCompany } from './chat.js';
-import { fetchBoard, FIELDS } from './boards.js';
+import { fetchBoard, FIELDS, EARLY } from './boards.js';
 import { normTitle } from '../core/db.js';
 
 const TPR = { day: 'r86400', week: 'r604800', month: 'r2592000' };
@@ -47,6 +47,20 @@ async function firstText(page, selectors) {
 // Returns [{ id, easyApply }] from the results list. Handles both LinkedIn layouts:
 // the new one (cards with componentkey="job-card-component-ref-<id>") and the classic one (data-job-id).
 const linkedinWasConnected = () => { try { return JSON.parse(db.prepare("SELECT v FROM kv WHERE k = 'linkedin'").get()?.v || '{}').connected; } catch { return false; } };
+// Fast path for the results list: LinkedIn's public search endpoint (10 jobs per request, no Chrome).
+// Returns null when it's unavailable, so the Chrome version below takes over.
+async function collectJobIdsFast({ keywords, location }) {
+  const want = config.search.maxJobsPerQuery || 25, ids = new Map();
+  for (let start = 0; ids.size < want && start < 100; start += 10) {
+    const r = await fastGet(`https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?${new URLSearchParams({ keywords, location: location || '', f_TPR: TPR[config.search.postedWithin] || TPR.week, sortBy: 'DD', start: String(start) })}`);
+    if (!r) return ids.size ? [...ids.values()] : null;
+    const found = [...(await r.text()).matchAll(/jobPosting:(\d{6,})/g)].map((m) => m[1]);
+    if (!found.length) break;
+    for (const id of found) if (!ids.has(id)) ids.set(id, { id, easyApply: false });
+  }
+  return [...ids.values()].slice(0, want);
+}
+
 async function collectJobIds(page, { keywords, location }) {
   const url = `https://www.linkedin.com/jobs/search/?keywords=${encodeURIComponent(keywords)}&location=${encodeURIComponent(location)}&f_TPR=${TPR[config.search.postedWithin] || TPR.week}&sortBy=DD`;
   const want = config.search.maxJobsPerQuery;
@@ -116,18 +130,20 @@ async function findOnCompanyBoard(company, title) {
 // title, company, location, description and whether the job applies on the company's site, but hides the
 // link itself, so the job is found on the company's own job board. Returns null when the browser is needed
 // (rate-limited, page changed, or a site Joblin can't submit to that you still want listed).
-// LinkedIn allows ~10 quick requests before it says "too many": pace them, and when it does, pause and retry
-// (still far faster than opening the job in Chrome).
-let fastNext = 0;
+// LinkedIn allows ~10 quick requests before it says "too many". Requests are paced; when it does say so,
+// the public pages rest for a minute and the signed-in Chrome takes over meanwhile (no waiting around).
+let fastNext = 0, fastRestUntil = 0;
 const fastSlot = async (gap) => { const wait = Math.max(0, fastNext - Date.now()); fastNext = Math.max(fastNext, Date.now()) + gap; if (wait) await new Promise((r) => setTimeout(r, wait)); };
+const fastResting = () => Date.now() < fastRestUntil;
+const fastGet = async (url) => {
+  if (fastResting()) return null;
+  await fastSlot(2000);
+  const r = await fetch(url, { signal: AbortSignal.timeout(12000), headers: { 'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36', 'accept-language': 'en-US,en;q=0.9' } }).catch(() => null);
+  if (r?.status === 429) { fastRestUntil = Date.now() + 60e3; return null; }
+  return r?.ok ? r : null;
+};
 async function readJobFast(id, manualOk = false) {
-  let r = null;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    await fastSlot(1500);
-    r = await fetch(`https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/${id}`, { signal: AbortSignal.timeout(12000), headers: { 'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36', 'accept-language': 'en-US,en;q=0.9' } }).catch(() => null);
-    if (r?.status !== 429) break;
-    fastNext = Date.now() + 15000 * (attempt + 1); // everyone waits, then tries again
-  }
+  const r = await fastGet(`https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/${id}`);
   if (!r) return null;
   if (!r.ok) return null;
   const $ = cheerio.load(await r.text());
@@ -139,7 +155,8 @@ async function readJobFast(id, manualOk = false) {
     description, hiring_team: '[]', company_domain: '' };
   if (!offsite) return { ...base, apply_url: '', ats: 'linkedin_easy_apply', easy_apply: 1 };
   const apply_url = await findOnCompanyBoard(company, title).catch(() => '');
-  if (!apply_url) return manualOk ? null : { ...base, apply_url: '', ats: 'company_site', easy_apply: 0 };
+  // Not on a board Joblin can submit to: a portal job (Workday…). Its LinkedIn page links to the portal, so no Chrome needed.
+  if (!apply_url) return { ...base, apply_url: '', ats: 'company_site', easy_apply: 0 };
   return { ...base, apply_url, ats: detectATS(apply_url), easy_apply: 0 };
 }
 
@@ -243,8 +260,8 @@ const withChrome = (fn) => { const run = chromeTurn.then(fn); chromeTurn = run.c
 let skippedManual = 0;
 export async function discover({ limit = config.sources?.linkedin?.maxPerRun ?? 30, onProgress = () => {} } = {}) {
   // The search tab, reopened if Chrome was closed mid-search (e.g. you connected LinkedIn or Gmail meanwhile).
-  let page = await workPage(await getContext(), 'find');
-  const tab = async () => { if (page.isClosed()) page = await workPage(await getContext(), 'find'); return page; };
+  let page = null; // opened only if the fast paths need Chrome
+  const tab = async () => { if (!page || page.isClosed()) page = await workPage(await getContext(), 'find'); return page; };
   const exclude = config.search.excludeTitleWords.map((w) => w.toLowerCase());
   let added = 0;
 
@@ -268,7 +285,8 @@ export async function discover({ limit = config.sources?.linkedin?.maxPerRun ?? 
     onProgress({ current: `Finding “${q.keywords}” listings${queries.length > 1 ? ` (search ${qi + 1} of ${queries.length})` : ""}…` });
     log('discover', `Searching "${q.keywords}" in ${q.location}`);
     let ids;
-    try { ids = await collectJobIds(await tab(), q); } catch (e) { log('error', e.message); if (/session expired/.test(e.message)) break; continue; }
+    try { ids = (await collectJobIdsFast(q)) || await collectJobIds(await tab(), q); } catch (e) { log('error', e.message); if (/session expired/.test(e.message)) break; continue; }
+    const wantsEarly = /\b(intern|internship|co-?op|student|new grad|graduate|summer analyst)\b/i.test(q.keywords);
     const im = config.sources?.linkedin?.includeManual;
     const manualOk = im === true || (im === 'finance' && fieldOf(q) === 'finance'); // portal jobs (Workday…) you submit yourself
     const fresh = ids.filter((j) => {
@@ -299,6 +317,8 @@ export async function discover({ limit = config.sources?.linkedin?.maxPerRun ?? 
           if (!SUBMITTABLE.has(job.ats) && !manualOk) { skippedManual++; markSeen.run(id, 'manual'); continue; } // only jobs Joblin can submit
           if ((job.description || '').length < 200 || !job.title || exclude.some((w) => job.title.toLowerCase().includes(w))) { markSeen.run(id, 'other'); continue; }
           if (restrictedFor(job.title)) { markSeen.run(id, 'other'); continue; } // a program you aren't eligible for
+          // An intern/co-op search keeps intern, co-op, student and new-grad titles only (LinkedIn mixes in full-time roles).
+          if (wantsEarly && !EARLY.test(job.title) && !config.sources?.boards?.includeEntryLevelWithoutKeyword) { markSeen.run(id, 'other'); continue; }
           if (added >= limit) break;
           const r = insertJob.run(job);
           if (r.changes) {
