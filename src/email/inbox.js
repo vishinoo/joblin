@@ -2,6 +2,8 @@ import { ImapFlow } from 'imapflow';
 import { db, log, kv, addTask } from '../core/db.js';
 import { generateJSON, clip } from '../core/llm.js';
 import { gmailReady } from './mailer.js';
+import { nextPattern } from './finder.js';
+import { renderEmail } from './people.js';
 import { gmailWebStatus, gmailWebRecent, gmailWebOpen } from './gmailWeb.js';
 
 function plainText(source) {
@@ -20,6 +22,22 @@ Respond as JSON: {"category": "...", "summary": "one short sentence"}`,
     { category: 'other', summary: subject }, { temperature: 0 });
 }
 
+// A guessed address bounced: try the person's next most likely address (up to 3 patterns), re-sending the intro.
+function retryNextAddress(email) {
+  const c = db.prepare('SELECT * FROM contacts WHERE email = ?').get(email);
+  if (!c || !c.pattern || !c.name) return;
+  const tried = JSON.parse(c.tried || '[]');
+  const domain = email.split('@')[1];
+  if (tried.length >= 3) return log('email', `${c.name}: no working address after ${tried.length} tries`);
+  let pattern = nextPattern(tried), next = '';
+  while (pattern) { tried.push(pattern); next = renderEmail(pattern, c.name, domain); if (next && !db.prepare('SELECT 1 FROM contacts WHERE email = ?').get(next)) break; next = ''; pattern = nextPattern(tried); }
+  if (!next) return;
+  const intro = db.prepare(`SELECT subject, body FROM emails WHERE contact_id = ? AND kind = 'intro' ORDER BY id DESC`).get(c.id);
+  db.prepare('UPDATE contacts SET email = ?, pattern = ?, tried = ? WHERE id = ?').run(next, pattern, JSON.stringify(tried), c.id);
+  if (intro) db.prepare(`INSERT INTO emails (contact_id, kind, subject, body, scheduled_at) VALUES (?, 'intro', ?, ?, datetime('now'))`).run(c.id, intro.subject, intro.body);
+  log('email', `Trying ${next} for ${c.name} instead`);
+}
+
 // Handles one inbox message: outreach replies, bounces, and application outcomes.
 async function handleMessage({ from, subject, text }, companies) {
   if (/mailer-daemon|postmaster/.test(from)) {
@@ -28,6 +46,7 @@ async function handleMessage({ from, subject, text }, companies) {
       db.prepare(`UPDATE emails SET status='bounced' WHERE contact_id = (SELECT id FROM contacts WHERE email = ?) AND status = 'sent'`).run(to.toLowerCase());
       db.prepare(`UPDATE emails SET status='cancelled' WHERE contact_id = (SELECT id FROM contacts WHERE email = ?) AND status = 'scheduled'`).run(to.toLowerCase());
       log('email', `Bounced: ${to}`);
+      retryNextAddress(to.toLowerCase());
     }
     return;
   }

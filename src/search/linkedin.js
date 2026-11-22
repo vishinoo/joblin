@@ -220,7 +220,17 @@ async function companyDomainFromLinkedIn(page) {
   return domain;
 }
 
-const SUBMITTABLE = new Set(['greenhouse', 'lever', 'ashby']);
+// Sites Joblin submits to itself. LinkedIn Easy Apply counts while LinkedIn is connected.
+const SUBMIT_SITES = new Set(['greenhouse', 'lever', 'ashby']);
+// Programs only open to a group you haven't said you belong to (Profile → self-identification).
+export function restrictedFor(title) {
+  const A = config.profile?.answers || {};
+  if (A.indigenous !== 'Yes' && /indigenous|first nations|aboriginal|autochtones|band (&|and) community members|members only/i.test(title)) return true;
+  if (A.veteran && !/^(yes|i am a)/i.test(A.veteran) && /\bveterans? (only|program)\b/i.test(title)) return true;
+  return false;
+}
+const SUBMITTABLE = { has: (ats) => SUBMIT_SITES.has(ats) || (ats === 'linkedin_easy_apply' && config.apply?.easyApply !== false && linkedinConnected()) };
+const linkedinConnected = () => { try { return JSON.parse(db.prepare("SELECT v FROM kv WHERE k = 'linkedin'").get()?.v || '{}').connected; } catch { return false; } };
 // LinkedIn jobs already read and passed over, so later searches don't read them again.
 // reason 'manual' = on a site Joblin can't submit to (re-checked if you turn on "Also show jobs I'd submit myself").
 db.exec(`CREATE TABLE IF NOT EXISTS linkedin_seen (id TEXT PRIMARY KEY, reason TEXT, at TEXT DEFAULT (datetime('now')))`);
@@ -245,9 +255,13 @@ export async function discover({ limit = config.sources?.linkedin?.maxPerRun ?? 
   const fallback = AS.locations[0] || config.profile?.country || '';
   const base = (AS.queries || []).map((q) => (AS.oneOff || !q.location ? { ...q, location: q.location || fallback } : q));
   const extra = (AS.companies || []).filter((c) => !c.board).flatMap((c) => base.slice(0, 2).map((q) => ({ ...q, keywords: `${q.keywords} ${c.name}` })));
-  const queries = AS.oneOff ? [...extra, ...base] : fairOrder(AS.onlyTargets && extra.length ? extra : [...extra, ...base]);
+  // "Finance" on its own is narrow on LinkedIn: also search the finance jobs students actually get.
+  const FIN_SIBLINGS = ['accounting co-op', 'banking intern', 'tax intern', 'investment analyst intern', 'financial analyst intern'];
+  const widen = (qs) => qs.flatMap((q) => (/^finance( intern(ship)?s?| co-?op| student)?$/i.test(q.keywords.trim())
+    ? [q, ...FIN_SIBLINGS.filter((k) => !qs.some((x) => x.keywords.toLowerCase() === k)).map((keywords) => ({ ...q, keywords }))] : [q]));
+  const queries = AS.oneOff ? widen([...extra, ...base]) : fairOrder(widen(AS.onlyTargets && extra.length ? extra : [...extra, ...base]));
   // No single search eats the whole run: each gets a share, so the next field still gets its turn.
-  const share = AS.oneOff ? limit : Math.max(4, Math.ceil(limit / Math.min(queries.length, 4)));
+  const share = AS.oneOff && queries.length === 1 ? limit : Math.max(4, Math.ceil(limit / Math.min(queries.length, 4)));
   skippedManual = 0;
   for (const [qi, q] of queries.entries()) {
     if (added >= limit || config.stopFind) break;
@@ -258,7 +272,7 @@ export async function discover({ limit = config.sources?.linkedin?.maxPerRun ?? 
     const im = config.sources?.linkedin?.includeManual;
     const manualOk = im === true || (im === 'finance' && fieldOf(q) === 'finance'); // portal jobs (Workday…) you submit yourself
     const fresh = ids.filter((j) => {
-      if (j.easyApply || db.prepare('SELECT 1 FROM jobs WHERE linkedin_id = ?').get(j.id)) return false;
+      if ((j.easyApply && !SUBMITTABLE.has('linkedin_easy_apply')) || db.prepare('SELECT 1 FROM jobs WHERE linkedin_id = ?').get(j.id)) return false;
       const seen = wasSeen.get(j.id);
       return !seen || (seen.reason === 'manual' && manualOk);
     });
@@ -281,9 +295,10 @@ export async function discover({ limit = config.sources?.linkedin?.maxPerRun ?? 
               throw e;
             }).finally(() => clearTimeout(timer)));
           const job = { ...read, search_track: q.track || 'auto' };
-          if (job.easy_apply || findDuplicateJob(job)) { markSeen.run(id, 'other'); continue; } // same job already found elsewhere
+          if ((job.easy_apply && !SUBMITTABLE.has('linkedin_easy_apply')) || findDuplicateJob(job)) { markSeen.run(id, 'other'); continue; } // same job already found elsewhere
           if (!SUBMITTABLE.has(job.ats) && !manualOk) { skippedManual++; markSeen.run(id, 'manual'); continue; } // only jobs Joblin can submit
           if ((job.description || '').length < 200 || !job.title || exclude.some((w) => job.title.toLowerCase().includes(w))) { markSeen.run(id, 'other'); continue; }
+          if (restrictedFor(job.title)) { markSeen.run(id, 'other'); continue; } // a program you aren't eligible for
           if (added >= limit) break;
           const r = insertJob.run(job);
           if (r.changes) {

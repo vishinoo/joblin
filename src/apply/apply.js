@@ -1,4 +1,4 @@
-import { getContext, holdOpen, workPage, markHeld } from './browser.js';
+import { getContext, holdOpen, workPage, markHeld, linkedinStatus } from './browser.js';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 const notify = (title, text) => process.platform === 'darwin' && execFile('osascript', ['-e', `display notification ${JSON.stringify(text)} with title ${JSON.stringify(title)}`], () => {});
@@ -193,13 +193,27 @@ Respond as JSON: {"answer": "..."}`, { answer: '' }, { temperature: long ? 0.5 :
 }
 
 // Read every visible form control along with its human label.
-async function scanFields(frame) {
-  return frame.$$eval('input, textarea, select', (els) => els.map((el, idx) => {
+// In the page: the closest question text above a field — the first line ending in "?" or "*" in the smallest
+// surrounding block (for forms like LinkedIn's that don't connect labels to their inputs).
+const NEAR_QUESTION = `(el) => {
+  for (let n = el.parentElement, i = 0; n && i < 7; n = n.parentElement, i++) {
+    const lines = (n.innerText || '').split('\\n').map((s) => s.trim()).filter(Boolean);
+    const q = lines.find((s) => /[?*]$/.test(s) && s.length > 6);
+    if (q) return q.replace(/\\*$/, '').trim();
+  }
+  return '';
+}`;
+async function scanFields(frame, scope = '') {
+  const sel = scope ? `${scope} input, ${scope} textarea, ${scope} select` : 'input, textarea, select';
+  await frame.evaluate(`window.nearQuestion = ${NEAR_QUESTION}`).catch(() => {});
+  return frame.$$eval(sel, (els) => els.map((el, idx) => {
     const id = el.id;
     const lab = (id && document.querySelector(`label[for="${CSS.escape(id)}"]`)?.innerText)
       || el.closest('label')?.innerText
       || el.getAttribute('aria-label')
       || el.closest('.field, .application-question, [class*="question"], [class*="field"], fieldset')?.querySelector('label, legend, .text, [class*="label"]')?.innerText
+      || (el.getAttribute('aria-labelledby') || '').split(/\s+/).map((i) => document.getElementById(i)?.innerText || '').join(' ').trim()
+      || (el.type !== 'radio' && el.type !== 'checkbox' ? nearQuestion(el) : '')
       || el.placeholder || el.name || '';
     const r = el.getBoundingClientRect();
     el.setAttribute('data-jobert', String(idx));
@@ -221,10 +235,10 @@ const loc = (frame, f) => f.id ? frame.locator(`[id="${f.id}"]`)
   : (f.name && f.type !== 'radio') ? frame.locator(`${f.tag}[name="${f.name}"]`).first()
   : frame.locator(`[data-jobert="${f.idx}"]`);
 
-async function fillForm(frame, job, docs) {
+async function fillForm(frame, job, docs, { scope = '' } = {}) {
   JOB = job;
   const unanswered = [];
-  const fields = await scanFields(frame);
+  const fields = await scanFields(frame, scope);
   if (process.env.JOBERT_DEBUG) console.log(`[debug] ${fields.length} fields in ${frame.url()}`, fields.map((f) => `${f.label}|${f.type}|${f.visible}`).slice(0, 15));
   const radioGroups = new Map();
 
@@ -240,8 +254,11 @@ async function fillForm(frame, job, docs) {
         await el.setInputFiles(/cover/i.test(what) ? docs.letterPath : docs.resumePath);
         continue;
       }
-      if (!f.visible || ['hidden', 'submit', 'button', 'search'].includes(f.type)) continue;
-      if (!label) continue;
+      // Radio buttons are often drawn as styled boxes with the real (0×0) input hidden, so they're grouped
+      // whether or not the input itself is visible. Everything else must be visible to be filled.
+      const choice = (f.type === 'radio' || f.type === 'checkbox') && f.name;
+      if ((!f.visible && !choice) || ['hidden', 'submit', 'button', 'search'].includes(f.type)) continue;
+      if (!label && !choice) continue;
       if (!f.id && !f.name && f.tag === 'input') continue; // hidden mirror inputs behind custom dropdowns
       if (f.type === 'radio' || f.type === 'checkbox') {
         if (f.type === 'checkbox' && /agree|consent|acknowledge|certify|privacy|terms/i.test(label)) await el.check().catch(() => {});
@@ -338,6 +355,11 @@ async function fillForm(frame, job, docs) {
         ans = await answer(label, job, { required: f.required, long: isLong(label, f.tag) });
       }
       if (ans) {
+        // "How many years…" boxes take a number: use the number from your answer ("3 years, mostly…" → "3").
+        const numeric = f.type === 'number' || (await el.getAttribute('inputmode').catch(() => '')) === 'numeric';
+        if (/how many|number of|years of/i.test(label) && /\d/.test(ans) && (numeric || f.tag === 'input')) ans = ans.match(/\d+(\.\d+)?/)[0];
+        const maxLen = Number(await el.getAttribute('maxlength').catch(() => 0)) || 0;
+        if (maxLen > 0 && ans.length > maxLen) ans = ans.slice(0, maxLen);
         await el.fill(ans);
         // Typeahead comboboxes (Greenhouse location, Ashby): pick the first suggestion.
         if (f.type === 'text' && /\b(location|city|school)\b/i.test(label)) {
@@ -354,15 +376,23 @@ async function fillForm(frame, job, docs) {
   // Radio groups: rule first, otherwise ask the model to pick among the labels.
   for (const [, group] of radioGroups) {
     const optLabels = await Promise.all(group.map((g) => frame.locator(`[data-jobert="${g.idx}"]`).evaluate((el) =>
-      (el.id && document.querySelector(`label[for="${CSS.escape(el.id)}"]`)?.innerText) || el.closest('label')?.innerText || el.value).catch(() => '')));
+      (el.id && document.querySelector(`label[for="${CSS.escape(el.id)}"]`)?.innerText) || el.closest('label')?.innerText
+        // Option text next to the button (LinkedIn): the smallest wrapper with short text.
+        || [el.parentElement, el.parentElement?.parentElement].map((n) => (n?.innerText || '').trim()).find((t) => t && t.length < 80)
+        || (el.value !== 'on' ? el.value : '')).catch(() => '')));
     const question = await frame.locator(`[data-jobert="${group[0].idx}"]`).evaluate((el) =>
-      el.closest('fieldset')?.querySelector('legend')?.innerText || el.closest('[class*="question"], [class*="field"]')?.querySelector('label, [class*="label"]')?.innerText || '').catch(() => '');
+      el.closest('fieldset')?.querySelector('legend')?.innerText || el.closest('[class*="question"], [class*="field"]')?.querySelector('label, [class*="label"]')?.innerText || window.nearQuestion?.(el) || '').catch(() => '');
     if (group[0].type === 'checkbox' && group.length === 1) continue; // single checkbox handled above
     const want = await answer(question, job, { options: optLabels.map((l) => l.trim()).filter(Boolean), required: group.some((g) => g.required) });
     const DECL = /decline|don.?t wish|do not wish|prefer not|not to (answer|say|disclose)|do not want|don.?t want|choose not/i;
     let i = want ? optLabels.findIndex((l) => l.trim().toLowerCase().startsWith(String(want).toLowerCase())) : -1;
     if (i < 0 && DECL.test(want || '')) i = optLabels.findIndex((l) => DECL.test(l));
-    if (i >= 0) await frame.locator(`[data-jobert="${group[i].idx}"]`).check({ force: true }).catch(() => {});
+    if (i >= 0) {
+      const box = frame.locator(`[data-jobert="${group[i].idx}"]`);
+      await box.check({ force: true }).catch(() => {});
+      // Styled radios: if the hidden input didn't take the click, click the visible option next to it.
+      if (!(await box.isChecked().catch(() => true))) await box.locator('xpath=..').click({ force: true }).catch(() => {});
+    }
     else if (group.some((g) => g.required)) unanswered.push(question);
   }
   return unanswered;
@@ -488,9 +518,7 @@ export async function prepareJob(job, { precise } = {}) {
   db.prepare(`UPDATE applications SET track=?, resume_path=?, cover_letter_path=?, cover_letter_text=?, match_score=?, analysis=?, letter_kind=?,
     status='pending_approval', updated_at=datetime('now') WHERE job_id=?`)
     .run(docs.track, docs.resumePath, docs.letterPath, docs.letterText, docs.score, JSON.stringify(docs.analysis), docs.letterKind, job.id);
-  // Finding the people to email is slow web lookups; do it in the background (it's only needed after you apply).
-  findContacts(job).catch((e) => log('error', `contacts ${job.company}: ${e.message}`));
-  return docs;
+  return docs; // people to email are looked up only once you've applied (startOutreach)
 }
 
 const WRITERS = 2; // jobs written up at the same time (the model and PDF renderer can overlap two)
@@ -512,14 +540,92 @@ export async function prepareBatch(limit = config.mode.batchSize, onProgress = (
 }
 
 // Outreach is only queued once you've committed to the application.
+// Jobs you applied to yourself (marked Applied on the Applications page) get outreach too.
+export function startOutreachFor(jobId) {
+  const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(jobId);
+  const app = db.prepare('SELECT track FROM applications WHERE job_id = ?').get(jobId);
+  if (job) startOutreach(job, { track: app?.track });
+}
 async function startOutreach(job, docs) {
   try {
-    const contacts = db.prepare('SELECT * FROM contacts WHERE job_id = ? AND unsubscribed = 0').all(job.id);
+    // Look people up only for jobs you've actually applied to: keeps LinkedIn searches well under its limits.
+    let contacts = db.prepare('SELECT * FROM contacts WHERE job_id = ? AND unsubscribed = 0').all(job.id);
+    if (!contacts.length && config.email.enabled) contacts = await findContacts(job);
     if (contacts.length) await scheduleOutreach(job, contacts, docs);
   } catch (e) { log('error', `outreach ${job.company}: ${e.message}`); }
 }
 
 // ---------- Stage 2: submit (only approved jobs) ----------
+// ---------- LinkedIn Easy Apply ----------
+// Opens the job on LinkedIn (signed in, in the hidden Chrome), clicks Easy Apply, and walks the pop-up:
+// fill this step → Next/Review → … → Submit. Questions it can't answer park the job in Questions, like any form.
+// LinkedIn's Easy Apply pop-up is a plain <dialog>. EA_SCOPE limits form filling to it; EA_DIALOG finds the visible one.
+const EA_SCOPE = 'dialog';
+const EA_DIALOG = 'dialog:visible';
+const EA_DONE = /application (was )?sent|your application was submitted|applied \d|application submitted/i;
+async function easyApply(job, docs, { dryRun = false } = {}) {
+  const page = await workPage(await getContext({ headless: false, hidden: config.apply.window !== 'visible' }), 'apply');
+  const close = async () => { // leave nothing half-open: dismiss, and discard the draft if LinkedIn asks
+    await page.locator('button[aria-label*="Dismiss" i]').first().click({ timeout: 1500 }).catch(() => {});
+    await page.locator('button:has-text("Discard")').first().click({ timeout: 1500 }).catch(() => {});
+  };
+  try {
+    page.setDefaultTimeout(8000);
+    await page.goto(job.linkedin_url || `https://www.linkedin.com/jobs/view/${job.linkedin_id}/`, { waitUntil: 'domcontentloaded', timeout: 45000 });
+    await jitter(2000, 3200);
+    if (/already applied|applied \d+ (minute|hour|day|week)s? ago/i.test(await page.locator('main').innerText().catch(() => ''))) { await markSubmitted(page, job, docs, 'already applied on LinkedIn'); return 'submitted'; }
+    const btn = page.locator('button.jobs-apply-button:has-text("Easy Apply"), button[aria-label*="Easy Apply" i], button:has-text("Easy Apply")').first();
+    if (!(await btn.isVisible().catch(() => false))) { setStatus(job.id, 'manual', 'LinkedIn shows no Easy Apply button for this job any more'); return 'manual'; }
+    await btn.click({ timeout: 5000 }).catch(() => {}); // LinkedIn changes the page address as the pop-up opens; the click still lands
+    await page.locator(EA_DIALOG).first().waitFor({ timeout: 12000 });
+    for (let step = 0; step < 15; step++) {
+      await jitter(700, 1200);
+      const dialogText = await page.locator(EA_DIALOG).first().innerText().catch(() => '');
+      if (EA_DONE.test(dialogText)) break;
+      const unanswered = await fillForm(page.mainFrame(), job, docs, { scope: EA_SCOPE });
+      const next = page.locator(`${EA_DIALOG} button:has-text("Submit application"), ${EA_DIALOG} button:has-text("Review"), ${EA_DIALOG} button:has-text("Next"), ${EA_DIALOG} button:has-text("Continue")`).first();
+      const label = (await next.innerText().catch(() => '')).trim();
+      if (/submit/i.test(label) && (dryRun || !config.apply.autoSubmit)) {
+        await close(); setStatus(job.id, 'pending_approval', 'Test run: Easy Apply filled but not sent'); return 'prepared';
+      }
+      if (!label) break;
+      await next.click().catch(() => {});
+      await jitter(1200, 2000);
+      // Still on the same step after Next (LinkedIn flags missing answers): those questions need you.
+      const nowText = await page.locator(EA_DIALOG).first().innerText().catch(() => '');
+      const stuck = !/submit/i.test(label) && nowText === dialogText;
+      const flagged = /please (enter|make a selection|select|answer)|enter a (valid|whole) |this field is required|required/i.test(nowText) && nowText === dialogText;
+      if (stuck || flagged) {
+        const errs = nowText.split('\n').filter((l) => /please (enter|make|select|answer)|required|valid/i.test(l)).slice(0, 3);
+        const qs = unanswered.length ? unanswered : errs.length ? errs : ['A question in LinkedIn Easy Apply'];
+        for (const q of qs) waitOn(remember(q, '', { company: job.company }), job.id);
+        await close();
+        setStatus(job.id, 'needs_review', `Waiting for your answer: ${qs.slice(0, 3).join(' | ')}`);
+        log('apply', `Waiting on you: ${job.title} @ ${job.company} (Easy Apply, ${qs.length} question${qs.length === 1 ? '' : 's'})`);
+        return 'needs_review';
+      }
+      if (/submit/i.test(label)) break;
+    }
+    await jitter(1500, 2500);
+    const after = `${await page.locator(EA_DIALOG).first().innerText().catch(() => '')} ${await page.locator('main').innerText().catch(() => '')}`;
+    if (EA_DONE.test(after) || /applied \d|application (was )?sent/i.test(after)) {
+      await page.locator('button[aria-label*="Dismiss" i], button:has-text("Done")').first().click({ timeout: 2000 }).catch(() => {});
+      await markSubmitted(page, job, docs, 'LinkedIn Easy Apply');
+      return 'submitted';
+    }
+    await page.screenshot({ path: path.join(path.dirname(docs.resumePath), 'what-happened.png') }).catch(() => {});
+    db.prepare('UPDATE applications SET proof_path = ? WHERE job_id = ?').run(path.join(path.dirname(docs.resumePath), 'what-happened.png'), job.id);
+    await close();
+    setStatus(job.id, 'failed', 'Easy Apply didn’t confirm the application was sent — try again, or apply on LinkedIn');
+    return 'failed';
+  } catch (e) {
+    await close();
+    setStatus(job.id, 'failed', `Easy Apply: ${e.message.split('\n')[0].slice(0, 200)}`);
+    log('error', `easy apply ${job.company}: ${e.message.split('\n')[0]}`);
+    return 'failed';
+  } finally { await page.goto('about:blank').catch(() => {}); }
+}
+
 export async function processJob(job, { dryRun = false } = {}) {
   let app = db.prepare('SELECT * FROM applications WHERE job_id = ?').get(job.id);
   if (!app?.resume_path) { await prepareJob(job); app = db.prepare('SELECT * FROM applications WHERE job_id = ?').get(job.id); }
@@ -527,11 +633,13 @@ export async function processJob(job, { dryRun = false } = {}) {
 
   const dup = alreadyApplied(job);
   if (dup) { setStatus(job.id, 'duplicate', `You already applied to this role at ${dup.company}`); log('apply', `Skipped duplicate: ${job.title} @ ${job.company}`); return 'skipped'; }
-  if (job.easy_apply) { setStatus(job.id, 'manual', 'LinkedIn Easy Apply only'); await startOutreach(job, docs); return 'manual'; }
+  if (job.easy_apply || job.ats === 'linkedin_easy_apply') {
+    if (!linkedinStatus().connected || config.apply.easyApply === false) { setStatus(job.id, 'manual', 'LinkedIn Easy Apply — connect LinkedIn so Joblin can apply'); return 'manual'; }
+    return easyApply(job, docs, { dryRun });
+  }
   if (!AUTOMATABLE.has(job.ats)) {
     setStatus(job.id, 'manual', `${job.ats} form — documents ready`);
     addTask({ title: `Apply manually: ${job.title} @ ${job.company}`, detail: `${job.ats} application. Tailored resume + cover letter are ready.`, url: job.apply_url || job.linkedin_url, priority: 3, jobId: job.id });
-    await startOutreach(job, docs);
     return 'manual';
   }
 

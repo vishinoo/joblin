@@ -81,7 +81,8 @@
   "apply": {
     "autoSubmit": true,
     "maxApplicationsPerRun": 50,
-    "browser": "background"
+    "browser": "background",
+    "easyApply": true
   },
   "llm": {
     "host": "http://127.0.0.1:11434",

@@ -39,18 +39,32 @@ function render(tplName, vars) {
   return { subject: first.replace(/^Subject:\s*/, '').trim(), body: rest.join('\n').trim() };
 }
 
+// One specific sentence about what the team/company works on. Small models sometimes echo the prompt or talk
+// about "applying", so bad lines are thrown out and a line built from the job analysis is used instead.
+const BAD_LINE = /job description|apply|applying|application|interested in|excited|passion|opportunity|i am writing|\bdear\b|^[a-z]/i;
+async function personalLine(job, c) {
+  const a = (() => { try { return JSON.parse(db.prepare('SELECT analysis FROM applications WHERE job_id = ?').get(job.id)?.analysis || '{}'); } catch { return {}; } })();
+  const out = await generateJSON(
+    `Write ONE sentence (12-25 words) for a cold email to ${c.name || 'a recruiter'}${c.title ? ` (${c.title})` : ''} at ${job.company}.
+The sentence names something concrete the ${job.company} team works on (a product, problem or customer from the description) and why that work appeals to the sender.
+Rules: start with a capital letter; don't mention applying, the job description, excitement or passion; no flattery; plain words.
+Example shape: "The way your team is rebuilding payouts for small businesses is the kind of problem I like working on."
+Job: ${job.title}. Description: ${clip(job.description, 1200)}
+Respond as JSON: {"line": "..."}`,
+    { line: '' }, { temperature: 0.4, maxTokens: 90 });
+  const line = String(out.line || '').replace(/^["'\s]+|["'\s]+$/g, '');
+  if (line && !BAD_LINE.test(line) && line.split(/\s+/).length >= 8 && line.split(/\s+/).length <= 35) return /[.!?]$/.test(line) ? line : `${line}.`;
+  const focus = String(a.company_focus || a.role_focus || '').replace(/\.$/, '');
+  return focus ? `${job.company}'s work on ${focus.charAt(0).toLowerCase()}${focus.slice(1)} is exactly the kind of problem I want to spend my time on.`
+    : `The ${job.title} role lines up closely with the work I've been doing.`;
+}
+
 // Queue an intro email per contact (follow-ups are queued when the intro actually sends).
 export async function scheduleOutreach(job, contacts, docs) {
   for (const c of contacts) {
     if (db.prepare('SELECT 1 FROM emails WHERE contact_id = ?').get(c.id)) continue;
     const first = (c.name || '').split(' ')[0] || 'there';
-    const { personal_line } = await generateJSON(
-      `Write ONE friendly, specific sentence (max 25 words) for a cold email to ${c.name || 'a recruiter'}${c.title ? ` (${c.title})` : ''} at ${job.company} about the ${job.title} role.
-Reference something concrete from the job description. No flattery, no clichés, do not start with "I".
-Job description: ${clip(job.description, 1200)}
-Respond as JSON: {"personal_line": "..."}`,
-      { personal_line: `The ${job.title} role lines up closely with the work I've been doing.` }, { maxTokens: 80 });
-
+    const personal_line = await personalLine(job, c);
     const { subject, body } = render('email-intro.txt', {
       role: job.title, company: job.company, first_name: first, name: `${P.firstName} ${P.lastName}`,
       personal_line, track_pitch: trackPitch(docs.track), phone: P.phone,

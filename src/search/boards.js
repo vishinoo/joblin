@@ -1,3 +1,4 @@
+import { restrictedFor } from './linkedin.js';
 import { placeMatches, countryOf } from '../../public/places.js';
 // Job source: companies' own public job boards (Greenhouse, Lever, Ashby).
 // These are official public APIs meant for listing jobs, no login or scraping needed,
@@ -132,7 +133,7 @@ export async function discoverBoards({ limit = config.sources?.boards?.maxPerRun
   const keep = (j, entry) => {
     const t = j.title.toLowerCase(), loc = j.location.toLowerCase();
     if (!EARLY.test(t) && !(S.includeEntryLevelWithoutKeyword && !/senior|staff|principal|lead|manager|director|sr\b/.test(t))) return false;
-    if (exclude.some((w) => t.includes(w)) || /\bph\.?d\b/.test(t)) return false;
+    if (exclude.some((w) => t.includes(w)) || /\bph\.?d\b/.test(t) || restrictedFor(j.title)) return false;
     if (!locationOk(loc, places)) return false;
     // Any field: keep roles whose title matches one of your position keywords (targets: any early-career role).
     if (words.length && !targetSet.has(entry) && !titleMatches(t, words)) return false;

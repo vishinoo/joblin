@@ -570,7 +570,7 @@ const APP_FILTERS = [
   ['skipped', 'Skipped', (s) => ['skipped', 'duplicate', 'withdrawn'].includes(s)],
   ['rejected', 'Rejected', (s) => s === 'rejected'],
 ];
-const OUTCOMES = [['interview', 'Interview'], ['offer', 'Offer'], ['rejected', 'Rejected'], ['withdrawn', 'Withdrawn'], ['skipped', 'Skip this job']];
+const OUTCOMES = [['submitted', 'Applied'], ['interview', 'Interview'], ['offer', 'Offer'], ['rejected', 'Rejected'], ['withdrawn', 'Withdrawn'], ['skipped', 'Skip this job']];
 const statusClass = (s) => (['submitted', 'interview', 'offer'].includes(s) ? 'good' : ['approved', 'pending_approval', 'queued'].includes(s) ? 'accent' : ['needs_review', 'manual'].includes(s) ? 'warn' : ['failed', 'rejected'].includes(s) ? 'bad' : '');
 
 VIEWS.applications = async (view) => {
@@ -591,7 +591,7 @@ VIEWS.applications = async (view) => {
     <select id="tf" aria-label="Kind of job" style="width:auto"><option value="">All kinds of jobs</option>${types.map((t) => `<option value="${esc(t)}" ${A.track === t ? 'selected' : ''}>${esc(label(t))} (${rows.filter((r) => r.track === t).length})</option>`).join('')}</select></div>
   <div class="panel tablewrap" id="appBox"><div class="selbar"><label style="display:flex;gap:8px;align-items:center"><input type="checkbox" data-pickall>Select all</label><span class="muted" data-count></span>
     <div style="margin-left:auto;display:flex;gap:8px;align-items:center"><button class="btn sm" data-needsel id="bRetry">Try again</button>
-      <select id="bMark" data-needsel aria-label="Mark selected as" style="width:auto"><option value="">Mark as…</option><option value="submitted">Applied</option>${OUTCOMES.map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select>
+      <select id="bMark" data-needsel aria-label="Mark selected as" style="width:auto"><option value="">Mark as…</option>${OUTCOMES.map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select>
       <button class="btn sm ghost danger" data-needsel id="bRemove">Remove</button></div></div>
     <table><thead><tr><th style="width:28px"></th><th>Role</th><th>Fit</th><th>Status</th><th>Documents</th><th>Updated</th></tr></thead><tbody id="rows"></tbody></table></div>`;
   let picked = () => [];
@@ -655,17 +655,18 @@ VIEWS.outreach = async (view) => {
   <div class="toolbar">
     <div class="seg" id="ef">${[['', 'All'], ['scheduled', 'Scheduled'], ['sent', 'Sent'], ['replied', 'Replied'], ['bounced', 'Bounced']].map(([k, l]) => `<button data-f="${k}" class="${state.emailFilter === k ? 'on' : ''}">${l}</button>`).join('')}</div>
     <span class="muted">${S.emails.today} of ${S.emails.cap} sent today</span>
-    <button class="btn sm" id="pause" style="margin-left:auto">${sys.emailPaused ? 'Resume sending' : 'Pause sending'}</button></div>
+    <button class="btn sm" id="findPeople" style="margin-left:auto" title="Look up recruiters and team leads for applications you've sent">Find people</button>
+    <button class="btn sm" id="pause">${sys.emailPaused ? 'Resume sending' : 'Pause sending'}</button></div>
   ${!rows.length ? `<section class="panel hello" style="margin-bottom:14px"><img src="/img/joblin-mailbox.png" alt="Joblin looking into an empty mailbox">
     <div><h2>No outreach yet</h2><div class="muted">After an application goes in, Joblin emails the recruiters or hiring managers for that job, then follows up once if they don't reply.</div>
     <div class="checks">
       <div><span class="dot ${sys.gmail ? 'ok' : ''}"></span>${sys.gmail ? `Sending from ${esc(sys.gmailUser)}` : '<a class="link" href="#/settings" id="toInteg">Connect Gmail</a> so Joblin can send'}</div>
       <div><span class="dot ${S.submitted ? 'ok' : ''}"></span>${S.submitted} applications sent — emails start after each one</div>
-      <div><span class="dot ${S.contacts ? 'ok' : ''}"></span>${S.contacts} contacts found. ${SET?.email?.hunterApiKey ? '' : 'Jobs from company boards need a free <a class="link" href="#/settings">Hunter key</a> to find recruiters.'}</div>
+      <div><span class="dot ${S.contacts ? 'ok' : ''}"></span>${S.contacts} people found. ${sys.linkedin?.connected ? 'Joblin finds recruiters and team leads on LinkedIn and works out their email from the company’s own address pattern.' : '<a class="link" href="#/settings">Connect LinkedIn</a> so Joblin can find recruiters and team leads.'}</div>
     </div></div></section>` : !sys.gmail ? `<div class="panel" style="padding:14px 18px;margin-bottom:14px">Emails are queued but won't send until you connect Gmail. <a class="link" href="#/settings" id="toInteg">Connect Gmail</a></div>` : ''}
   <div class="panel tablewrap" ${rows.length ? '' : 'hidden'}><table><thead><tr><th>Contact</th><th>Company</th><th>Email</th><th>Status</th><th>When</th><th></th></tr></thead><tbody>
   ${rows.filter((r) => !state.emailFilter || r.status === state.emailFilter).map((r) => `<tr>
-    <td>${esc(r.name || '—')}<div class="sub">${esc(r.email)}${r.source === 'guessed' ? ' · guessed address' : ''}</div></td>
+    <td>${r.linkedin ? `<a class="link" href="${esc(r.linkedin)}" target="_blank" rel="noopener">${esc(r.name || '—')}</a>` : esc(r.name || '—')}<div class="sub">${esc(r.email)}${r.source === 'guessed' ? ' · likely address' : r.source === 'pattern' ? ' · their address pattern' : r.source === 'hunter' ? ' · verified' : ''}</div></td>
     <td>${esc(r.company)}<div class="sub">${esc(r.title)}</div></td>
     <td><details><summary class="sub" style="cursor:pointer">${r.kind === 'followup' ? 'Follow-up' : 'Intro'}: ${esc(r.subject)}</summary><div class="sub" style="white-space:pre-wrap;margin-top:8px;max-width:520px">${esc(r.body)}</div></details>
       ${r.reply_snippet ? `<div class="sub" style="margin-top:6px;color:var(--ink-2)">“${esc(r.reply_snippet.slice(0, 160))}”</div>` : ''}${r.error ? `<div class="sub" style="color:var(--bad)">${esc(r.error)}</div>` : ''}</td>
@@ -673,6 +674,13 @@ VIEWS.outreach = async (view) => {
     <td>${r.status === 'scheduled' ? `<button class="btn sm ghost" data-cancel="${r.id}">Cancel</button>` : ''}</td></tr>`).join('') || `<tr><td colspan="6"><div class="empty"><b>No outreach yet</b>Emails are written after each application goes in.</div></td></tr>`}
   </tbody></table></div>`;
   $$('#ef button').forEach((b) => b.onclick = () => { state.emailFilter = b.dataset.f; render(); });
+  $('#findPeople').onclick = async (ev) => {
+    const b = ev.currentTarget; b.disabled = true; b.textContent = 'Finding people…';
+    const r = await api('/outreach/find', { method: 'POST', body: {} });
+    if (!r.started) { toast(r.running ? 'Already looking — new people show up here as they’re found' : 'Every sent application already has people'); b.disabled = false; b.textContent = 'Find people'; return; }
+    toast(`Looking up people for ${r.count} application${r.count === 1 ? '' : 's'} — this takes a few minutes`);
+    const t = setInterval(async () => { const f = await api('/outreach/finding'); if (!f.running) { clearInterval(t); toast('Done finding people'); if (route() === 'outreach') render(); } }, 5000);
+  };
   $('#pause').onclick = async () => { await api('/email/pause', { method: 'POST', body: { paused: !sys.emailPaused } }); await refreshSummary(); render(); };
   $('#toInteg')?.addEventListener('click', () => (state.settingsTab = 'integrations'));
   $$('[data-cancel]').forEach((b) => b.onclick = async () => { await api(`/emails/${b.dataset.cancel}/cancel`, { method: 'POST', body: {} }); render(); });
@@ -753,7 +761,7 @@ SETTINGS.integrations = async (el) => {
     <span class="pill ${sys.llm ? 'good' : 'bad'}">${sys.llm ? 'Ready' : 'Not ready'}</span></div></section>
 
   <section class="panel panel-b"><div class="integ"><div class="ico">H</div>
-    <div><div class="name">Hunter.io <span class="muted" style="font-weight:400">optional</span></div><div class="muted" style="font-size:13px">Verifies recruiter email addresses so fewer emails bounce. The free plan covers 25 lookups a month.</div></div><span></span></div>
+    <div><div class="name">Hunter.io <span class="muted" style="font-weight:400">optional</span></div><div class="muted" style="font-size:13px">Not needed: Joblin finds people on LinkedIn and works out their addresses itself. A Hunter key only double-checks addresses so even fewer bounce. The free plan covers 25 lookups a month.</div></div><span></span></div>
     <div style="display:flex;gap:8px;margin-top:12px"><input type="password" id="hunter" placeholder="API key" value="${esc(SET.email.hunterApiKey || '')}"><button class="btn" id="hunterSave">Save key</button></div></section>`;
   $('#liOn')?.addEventListener('click', async () => {
     try { const r = await api('/integrations/linkedin/connect', { method: 'POST', body: {} }); toast(r.message); poll(); } catch (e) { toast(e.message, true); }

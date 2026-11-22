@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS applications (
 CREATE TABLE IF NOT EXISTS contacts (
   id INTEGER PRIMARY KEY,
   job_id INTEGER REFERENCES jobs(id),
-  name TEXT, title TEXT, email TEXT, source TEXT,  -- posting | guessed | hunter
+  name TEXT, title TEXT, email TEXT, source TEXT,  -- posting | pattern | guessed | hunter
   confidence TEXT,
   unsubscribed INTEGER DEFAULT 0,
   UNIQUE(email)
@@ -70,6 +70,9 @@ for (const sql of [
   'ALTER TABLE jobs ADD COLUMN search_track TEXT',
   'ALTER TABLE applications ADD COLUMN letter_kind TEXT',
   'ALTER TABLE applications ADD COLUMN proof_path TEXT',
+  'ALTER TABLE contacts ADD COLUMN linkedin TEXT',
+  'ALTER TABLE contacts ADD COLUMN pattern TEXT', // the address pattern used (for retrying after a bounce)
+  'ALTER TABLE contacts ADD COLUMN tried TEXT', // JSON list of patterns already tried
 ]) { try { db.exec(sql); } catch {} }
 
 export function log(type, message) {

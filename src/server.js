@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ROOT, config, saveConfig, saveEnv, paths } from './core/config.js';
 import { db, kv, addTask, log } from './core/db.js';
-import { gmailReady, verifyGmail, resetTransport, senderAddress } from './email/mailer.js';
+import { gmailReady, verifyGmail, resetTransport, senderAddress, scheduleOutreach } from './email/mailer.js';
+import { findContacts } from './email/contacts.js';
 import { llmAvailable, PROVIDERS, testModel, currentModel, installedOllamaModels } from './core/llm.js';
 import { gmailWebStatus, connectGmailWeb, disconnectGmailWeb } from './email/gmailWeb.js';
 import { listAnswers, setAnswer, deleteAnswer, pendingCount, listFacts, addFact, updateFact, deleteFacts, deleteAnswers, confirmAnswers, unblockedBy } from './you/memory.js';
@@ -15,7 +16,7 @@ import { linkedinStatus, connectLinkedIn, disconnectLinkedIn, isBrowserBusy, sho
 import { importResume, confirmResume, parseQuality } from './you/resumeImport.js';
 import { getResume, renderLetter, renderResumePreview, chooseTrack, renderSampleLetter, resumeUsage } from './apply/documents.js';
 import { allPositions } from './you/profile.js';
-import { prepareJob, suggestAnswer } from './apply/apply.js';
+import { prepareJob, suggestAnswer, startOutreachFor } from './apply/apply.js';
 import { updateRoutes } from './updater.js';
 
 const SUGGESTED = {
@@ -84,6 +85,7 @@ export function startServer(actions) {
 
   app.patch('/api/applications/:id', (req, res) => {
     db.prepare(`UPDATE applications SET status = ?, updated_at = datetime('now') WHERE job_id = ?`).run(req.body.status, req.params.id);
+    if (req.body.status === 'submitted') startOutreachFor(+req.params.id);
     res.json({ ok: true });
   });
 
@@ -131,6 +133,7 @@ export function startServer(actions) {
       }
     })();
     if (action === 'retry' && count) actions.apply();
+    if (action === 'status' && status === 'submitted') ids.forEach((id) => startOutreachFor(id));
     res.json({ ok: true, count });
   });
 
@@ -174,9 +177,30 @@ export function startServer(actions) {
   // ---------- Outreach / tasks / events ----------
   app.get('/api/emails', (_req, res) => res.json(db.prepare(`
     SELECT e.id, e.kind, e.subject, e.body, e.status, e.scheduled_at, e.sent_at, e.replied_at, e.reply_snippet, e.error,
-      c.name, c.email, c.source, c.confidence, j.company, j.title
+      c.name, c.email, c.source, c.confidence, c.linkedin, j.company, j.title
     FROM emails e JOIN contacts c ON c.id = e.contact_id JOIN jobs j ON j.id = c.job_id
     ORDER BY COALESCE(e.replied_at, e.sent_at, e.scheduled_at) DESC LIMIT 2000`).all()));
+  // Catch up: find people (and queue intro emails) for applications already sent that have no contacts yet.
+  let finding = false;
+  app.post('/api/outreach/find', (_req, res) => {
+    if (finding) return res.json({ started: false, running: true });
+    const jobs = db.prepare(`SELECT j.*, a.track FROM jobs j JOIN applications a ON a.job_id = j.id
+      WHERE a.status IN ('submitted','interview','offer') AND NOT EXISTS (SELECT 1 FROM contacts c WHERE c.job_id = j.id)
+      ORDER BY a.applied_at DESC LIMIT 20`).all();
+    if (!jobs.length) return res.json({ started: false, count: 0 });
+    finding = true;
+    (async () => {
+      let people = 0;
+      for (const job of jobs) {
+        try { const cs = await findContacts(job); people += cs.length; if (cs.length) await scheduleOutreach(job, cs, { track: job.track }); }
+        catch (e) { log('error', `people ${job.company}: ${e.message}`); }
+      }
+      log('email', `Found ${people} people for ${jobs.length} applications`);
+    })().finally(() => { finding = false; });
+    res.json({ started: true, count: jobs.length });
+  });
+  app.get('/api/outreach/finding', (_req, res) => res.json({ running: finding }));
+
   app.post('/api/emails/:id/cancel', (req, res) => { db.prepare(`UPDATE emails SET status='cancelled' WHERE id=? AND status='scheduled'`).run(req.params.id); res.json({ ok: true }); });
   app.post('/api/email/pause', (req, res) => { kv.set('emailPaused', Boolean(req.body.paused)); res.json({ ok: true }); });
 
