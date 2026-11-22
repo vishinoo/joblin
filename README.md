@@ -11,6 +11,8 @@ Joblin hunts down openings, reads every posting, writes you a tailored resume an
 
 It runs on your own computer. With [Ollama](https://ollama.com) it's **free, private, and needs no API keys.**
 
+### 👉 [Step-by-step install guide and demo video: vishinoo.github.io/joblin](https://vishinoo.github.io/joblin/)
+
 ⭐ **If Joblin saves you an afternoon of copy-pasting, star the repo so other job hunters can find him.** ⭐
 
 </div>
@@ -55,7 +57,7 @@ curl -fsSL https://raw.githubusercontent.com/vishinoo/joblin/main/install.sh | b
 
 That's it. The installer:
 
-- installs Node.js and Ollama if you don't have them (using Homebrew on a Mac, if you have it)
+- installs Node.js and Ollama if you don't have them (no admin password, Homebrew or git needed)
 - downloads Joblin's free AI brain (`qwen2.5:3b`, about 2 GB)
 - puts Joblin in a `joblin` folder in your home folder
 - adds a **Joblin** launcher to your Desktop, so next time you just double-click it
