@@ -13,6 +13,7 @@ ollama pull qwen2.5:3b               # or set an API key in Settings → AI mode
 npm run background                   # dashboard at http://localhost:4321, no app window
 npm test                             # unit tests (uses a throwaway data folder)
 npm run check                        # syntax-checks every JS file
+npm run smoke                        # opens every page and settings tab in headless Chrome (Joblin must be running)
 ```
 
 Set `JOBLIN_HOME=/some/folder` to keep a second copy of your settings, database and browser profile somewhere else. The tests do this, so they never touch real data. `JOBERT_DEBUG=1` prints what the form filler sees and decides.
@@ -42,8 +43,9 @@ find ──▶ queued ──▶ prepare ──▶ pending_approval ──▶ app
    - Unanswerable questions park the job, and it requeues itself when the user answers.
    - Security codes are read from Gmail (`src/email/inbox.js`, `src/email/gmailWeb.js`).
 5. **Outreach** (`src/email/`)
-   - After applying, emails go to the people who posted the job, as a drip in business hours.
-   - Replies, interviews and rejections are read from the inbox.
+   - After applying, `contacts.js` finds people (posting → LinkedIn hiring team → LinkedIn people search picked by the model, `finder.js`) and `mailer.js` writes each an intro from `templates/email-intro.txt` (or the user's own version in Settings).
+   - Emails are `scheduled` (auto-send, the default) or `draft`; `dripTick` sends one at a time in the sending window. Follow-ups thread under the intro.
+   - Replies, bounces, interviews and rejections are read from the inbox (`inbox.js`); a reply gets a drafted answer (`draftReply`).
 
 The workers, the scheduler and the stop/pause flags live in `start.js`. The dashboard API is `src/server.js`. The UI is `public/app.js`: one file, with one `VIEWS.<page>` function per page and one `SETTINGS.<tab>` function per settings tab.
 

@@ -16,6 +16,21 @@ page.on('console', (m) => m.type() === 'error' && !/favicon/.test(m.text()) && p
 page.on('response', (r) => r.url().includes('/api/') && r.status() >= 400 && problems.push(`${where}: ${r.status()} ${r.url().replace(base, '')}`));
 
 await page.goto(base, { waitUntil: 'networkidle' });
+// A fresh install opens the setup wizard first: walk through it like a new user would.
+if (await page.locator('#onboarding:not([hidden])').count()) {
+  for (let step = 0; step < 5; step++) {
+    where = `setup step ${step + 1}`;
+    await page.waitForTimeout(600);
+    if (await page.locator('#obConfirm').count()) {
+      await page.locator('#posChips input.ci').fill('Finance Intern'); await page.keyboard.press('Enter');
+      await page.locator('#obConfirm').check();
+    }
+    await page.locator('#obNext').click({ timeout: 5000 }).catch((e) => problems.push(`${where}: ${e.message.split('\n')[0]}`));
+  }
+  await page.waitForTimeout(800);
+  await page.locator('.modal-back button:has-text("Later")').click({ timeout: 3000 }).catch(() => {});
+  if (await page.locator('#onboarding:not([hidden])').count()) problems.push('setup wizard did not finish');
+}
 for (const r of routes) {
   where = r;
   await page.evaluate((h) => (location.hash = `#/${h}`), r);
@@ -24,7 +39,7 @@ for (const r of routes) {
   if (text.length < 20) problems.push(`${r}: page looks empty`);
 }
 for (const t of tabs) {
-  where = `settings/${t}`;
+  where = `settings/${t}`; if (process.env.SMOKE_DEBUG) console.log(where);
   await page.evaluate(() => (location.hash = '#/dashboard'));
   await page.waitForTimeout(200);
   await page.evaluate(() => (location.hash = '#/settings'));

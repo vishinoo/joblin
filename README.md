@@ -28,8 +28,8 @@ You tell me what jobs you want. I go out into the job boards and come back with 
 1. **Read the posting.** I work out the four things they actually care about, what the company does, and how formal to sound.
 2. **Tailor your resume.** I pick your strongest real bullet points for that job. Real ones only. I don't make things up.
 3. **Write the cover letter.** I draft a few openings, score them, throw out the clichés, and keep the best one.
-4. **Fill in the application** on Greenhouse, Lever or Ashby. Every question you answer gets remembered, so I never ask twice.
-5. **Email the humans.** I find who's hiring and send a polite note during business hours, then follow up if they go quiet.
+4. **Fill in the application** on Greenhouse, Lever, Ashby or LinkedIn Easy Apply. Every question you answer gets remembered, so I never ask twice.
+5. **Email the humans.** I find the recruiters and team leads for that role and schedule a short, human note in business hours, then follow up once if they go quiet. You can edit, reschedule or discard any email before it goes, and I draft replies when people write back. Ask me for "more people at Stripe" any time.
 
 Then I hand it all to you for review. You say yes, I hit submit.
 

@@ -10,7 +10,8 @@
     "dry": "node start.js run --dry",
     "background": "node start.js --no-window",
     "update": "git pull --ff-only --autostash origin main && npm install --no-audit --no-fund",
-    "check": "node scripts/check.mjs"
+    "check": "node scripts/check.mjs",
+    "smoke": "node scripts/smoke.mjs"
   },
   "keywords": [],
   "author": "",
