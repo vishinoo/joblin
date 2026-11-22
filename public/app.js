@@ -670,6 +670,16 @@ VIEWS.applications = async (view) => {
 const utcDate = (t) => new Date(String(t || '').replace(' ', 'T') + (/[zZ]|[+-]\d\d:?\d\d$/.test(String(t)) ? '' : 'Z'));
 const toLocalInput = (t) => { const d = utcDate(t); if (isNaN(d)) return ''; const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; };
 const fromLocalInput = (v) => new Date(v).toISOString().slice(0, 19).replace('T', ' ');
+// When a due email actually goes: now if we're inside your sending hours (weekdays), else the next opening.
+const nextSlot = (E) => {
+  const d = new Date(), h1 = E.sendWindow?.startHour ?? 8, h2 = E.sendWindow?.endHour ?? 17;
+  const open = (x) => x.getDay() % 6 !== 0 && x.getHours() >= h1 && x.getHours() < h2;
+  if (open(d)) return 'Sending now';
+  if (d.getHours() >= h2 || d.getDay() % 6 === 0) d.setDate(d.getDate() + 1);
+  while (d.getDay() % 6 === 0) d.setDate(d.getDate() + 1);
+  d.setHours(h1, 0, 0, 0);
+  return d.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+};
 const exactTime = (t) => utcDate(t).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 const EMAIL_FILTERS = [
   ['', 'All', () => true],
@@ -686,7 +696,6 @@ VIEWS.outreach = async (view) => {
   const O = (state.out ??= { f: '', q: '', open: null });
   const E = SET.email || {};
   const count = (k) => rows.filter(EMAIL_FILTERS.find((f) => f[0] === k)[2]).length;
-  const nDraft = count('draft');
   view.innerHTML = `
   <div class="toolbar">
     <div class="seg filters" id="ef">${EMAIL_FILTERS.map(([k, l]) => `<button data-f="${k}" class="${O.f === k ? 'on' : ''}">${l}<span class="n">${count(k)}</span></button>`).join('')}</div>
@@ -694,8 +703,7 @@ VIEWS.outreach = async (view) => {
     <button class="btn sm" id="findPeople" style="margin-left:auto" title="Look up recruiters and team leads for applications you've sent">Find people</button>
     <button class="btn sm" id="pause">${sys.emailPaused ? 'Resume sending' : 'Pause sending'}</button></div>
   <div class="toolbar"><input type="search" id="oq" placeholder="Search person, company, role or email" value="${esc(O.q)}">
-    ${nDraft ? `<button class="btn sm primary" id="sendDrafts">Send all ${nDraft} draft${nDraft === 1 ? '' : 's'}</button>` : ''}
-    <span class="muted" style="font-size:12.5px">${E.autoSend ? 'Auto-send is on: new emails go out by themselves.' : 'Auto-send is off: new emails wait here as drafts.'} <a class="link" href="#/settings" id="toEmailSet">Change</a></span></div>
+    <span class="muted" style="font-size:12.5px">${E.autoSend !== false ? `Auto-send is on: emails go out by themselves, weekdays ${E.sendWindow?.startHour ?? 8}:00–${E.sendWindow?.endHour ?? 17}:00.` : 'Auto-send is off: new emails wait here as drafts.'} <a class="link" href="#/settings" id="toEmailSet">Change</a></span></div>
   ${!rows.length ? `<section class="panel hello" style="margin-bottom:14px"><img src="/img/joblin-mailbox.png" alt="Joblin looking into an empty mailbox">
     <div><h2>No outreach yet</h2><div class="muted">After an application goes in, Joblin finds the recruiters and team leads for that job and writes them a short note. Ask in the chat for “more people at <i>company</i>” any time.</div>
     <div class="checks">
@@ -703,10 +711,15 @@ VIEWS.outreach = async (view) => {
       <div><span class="dot ${S.submitted ? 'ok' : ''}"></span>${S.submitted} applications sent — emails start after each one</div>
       <div><span class="dot ${S.contacts ? 'ok' : ''}"></span>${S.contacts} people found. ${sys.linkedin?.connected ? 'Joblin finds recruiters and team leads on LinkedIn and works out their email from the company’s own address pattern.' : '<a class="link" href="#/settings">Connect LinkedIn</a> so Joblin can find recruiters and team leads.'}</div>
     </div></div></section>` : !sys.gmail ? `<div class="panel" style="padding:14px 18px;margin-bottom:14px">Emails won't send until you connect Gmail. <a class="link" href="#/settings" id="toInteg">Connect Gmail</a></div>` : ''}
-  <div class="panel tablewrap" ${rows.length ? '' : 'hidden'}><table class="outtable"><thead><tr><th>Person</th><th>Company</th><th>Email</th><th>Status</th><th>When</th><th></th></tr></thead><tbody id="orows"></tbody></table></div>`;
+  <div class="panel tablewrap" id="outBox" ${rows.length ? '' : 'hidden'}><div class="selbar"><label style="display:flex;gap:8px;align-items:center"><input type="checkbox" data-pickall>Select all</label><span class="muted" data-count></span>
+    <div style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <button class="btn sm primary" data-needsel id="oSend" title="Send at the next sending slot">Send now</button>
+      <span class="schedwrap"><input type="datetime-local" id="oAt" aria-label="Schedule for"><button class="btn sm" data-needsel id="oSched">Schedule</button></span>
+      <button class="btn sm ghost danger" data-needsel id="oDiscard">Discard</button></div></div>
+    <table class="outtable"><thead><tr><th style="width:28px"></th><th>Person</th><th>Company</th><th>Email</th><th>Status</th><th>When</th></tr></thead><tbody id="orows"></tbody></table></div>`;
 
   const whenCell = (r) => r.status === 'scheduled' || r.status === 'draft'
-    ? (utcDate(r.scheduled_at) <= new Date() ? `<span title="${esc(exactTime(r.scheduled_at))}">${r.status === 'draft' ? 'When you send it' : 'Next sending slot'}</span>` : esc(exactTime(r.scheduled_at)))
+    ? (utcDate(r.scheduled_at) <= new Date() ? `<span title="${esc(exactTime(r.scheduled_at))}">${r.status === 'draft' ? 'When you send it' : esc(nextSlot(E))}</span>` : esc(exactTime(r.scheduled_at)))
     : r.status === 'replied' ? when(r.replied_at) : r.sent_at ? esc(exactTime(r.sent_at)) : '—';
   const draw = () => {
     const pass = EMAIL_FILTERS.find((f) => f[0] === O.f)[2];
@@ -715,6 +728,7 @@ VIEWS.outreach = async (view) => {
     $('#orows').innerHTML = f.map((r) => {
       const editable = ['draft', 'scheduled'].includes(r.status);
       return `<tr class="${r.status === 'replied' && !r.seen ? 'unread' : ''}">
+      <td>${editable ? `<input type="checkbox" data-pick="${r.id}" aria-label="Select email to ${esc(r.name || r.email)}">` : ''}</td>
       <td>${r.linkedin ? `<a class="link" href="${esc(r.linkedin)}" target="_blank" rel="noopener">${esc(r.name || '—')}</a>` : esc(r.name || '—')}
         <div class="sub">${esc(r.person_title || '')}</div>
         ${r.why ? `<div class="sub why" title="Why Joblin picked them">${esc(r.why)}</div>` : ''}</td>
@@ -727,30 +741,41 @@ VIEWS.outreach = async (view) => {
             <label class="f">Subject<input type="text" data-subj value="${esc(r.subject)}"></label>
             <label class="f">Message<textarea data-body rows="9">${esc(r.body)}</textarea></label>
             <label class="f">Send at <span class="muted" style="font-weight:400">(your time; it waits for your sending hours)</span><input type="datetime-local" data-at value="${toLocalInput(r.scheduled_at)}"></label>
-            <div style="display:flex;gap:8px"><button class="btn sm" data-save="${r.id}">Save</button>${r.status === 'draft' ? `<button class="btn sm primary" data-send="${r.id}">Save and send</button>` : ''}<button class="btn sm ghost" data-open="${r.id}">Close</button></div></div>`
+            <div style="display:flex;gap:8px"><button class="btn sm primary" data-save="${r.id}">Save</button><button class="btn sm ghost" data-open="${r.id}">Close</button></div></div>`
           : `<div class="sub" style="white-space:pre-wrap;margin-top:8px;max-width:560px">${esc(r.body)}</div>`) : ''}</td>
-      <td>${pill(r.status)}</td><td class="sub">${whenCell(r)}</td>
-      <td style="white-space:nowrap">${r.status === 'draft' ? `<button class="btn sm primary" data-send="${r.id}">Send</button> ` : ''}${editable ? `<button class="btn sm ghost" data-cancel="${r.id}">${r.status === 'draft' ? 'Discard' : 'Cancel'}</button>` : ''}</td></tr>`;
+      <td>${pill(r.status)}</td><td class="sub">${editable ? `<button class="linkbtn" data-open="${r.id}" title="Change when it sends">${whenCell(r)}</button>` : whenCell(r)}</td></tr>`;
     }).join('') || `<tr><td colspan="6"><div class="empty"><b>Nothing here</b>${O.q ? 'No emails match your search.' : 'No emails in this group.'}</div></td></tr>`;
     $$('[data-open]').forEach((b) => b.onclick = () => { const id = +b.dataset.open; O.open = O.open === id ? null : id; draw(); });
     const fields = (id) => { const box = $(`[data-save="${id}"]`)?.closest('.emailedit'); if (!box) return {}; const at = $('[data-at]', box).value;
       return { subject: $('[data-subj]', box).value, body: $('[data-body]', box).value, scheduled_at: at ? fromLocalInput(at) : undefined }; };
-    $$('[data-save]').forEach((b) => b.onclick = async () => { await api(`/emails/${b.dataset.save}`, { method: 'PUT', body: fields(b.dataset.save) }); toast('Saved'); O.open = null; render(); });
-    $$('[data-send]').forEach((b) => b.onclick = async () => {
-      const id = b.dataset.send; const x = fields(id); if (x.subject !== undefined) await api(`/emails/${id}`, { method: 'PUT', body: x });
-      await api('/emails/send', { method: 'POST', body: { ids: [+id] } }); toast(sys.gmail ? 'Queued — it goes out in your sending hours' : 'Queued — connect Gmail so it can send'); O.open = null; refreshSummary(); render();
+    $$('[data-save]').forEach((b) => b.onclick = async () => {
+      const x = fields(b.dataset.save);
+      await api(`/emails/${b.dataset.save}`, { method: 'PUT', body: x });
+      // Picking a time schedules a draft too.
+      if (x.scheduled_at) await api('/emails/bulk', { method: 'POST', body: { ids: [+b.dataset.save], action: 'schedule', at: x.scheduled_at } });
+      toast(!x.scheduled_at ? 'Saved' : utcDate(x.scheduled_at) > new Date() ? `Saved — sends ${exactTime(x.scheduled_at)}` : 'Saved — sends at the next sending slot'); O.open = null; refreshSummary(); render();
     });
-    $$('[data-cancel]').forEach((b) => b.onclick = async () => { await api(`/emails/${b.dataset.cancel}/cancel`, { method: 'POST', body: {} }); refreshSummary(); render(); });
+    picked = selectable($('#outBox'));
+  };
+  let picked = () => [];
+  const bulk = async (action, extra = {}) => { const ids = picked(); if (!ids.length) return null; return api('/emails/bulk', { method: 'POST', body: { ids, action, ...extra } }); };
+  const soon = new Date(Date.now() + 864e5); soon.setHours(9, 0, 0, 0); if ($('#oAt')) $('#oAt').value = toLocalInput(soon.toISOString());
+  $('#oSend').onclick = async () => { const r = await bulk('send'); if (r) { toast(`${r.count} queued — ${sys.gmail ? 'they go out a few minutes apart in your sending hours' : 'connect Gmail so they can send'}`); refreshSummary(); render(); } };
+  $('#oSched').onclick = async () => {
+    const v = $('#oAt').value; if (!v) return toast('Pick a date and time first', true);
+    const at = fromLocalInput(v); if (utcDate(at) < new Date()) return toast('Pick a time in the future', true);
+    const r = await bulk('schedule', { at }); if (r) { toast(`${r.count} scheduled for ${exactTime(at)}`); refreshSummary(); render(); }
+  };
+  $('#oDiscard').onclick = async () => {
+    const n = picked().length;
+    if (!(await ask({ title: `Discard ${n} email${n === 1 ? '' : 's'}?`, body: 'They won’t be sent. The people stay on Outreach.', ok: 'Discard', danger: true }))) return;
+    const r = await bulk('discard'); if (r) { toast(`Discarded ${r.count}`); refreshSummary(); render(); }
   };
   $$('#ef button').forEach((b) => b.onclick = async () => {
     O.f = b.dataset.f; $$('#ef button').forEach((x) => x.classList.toggle('on', x === b)); draw();
     if (O.f === 'replied' && S.newReplies) { await api('/emails/seen', { method: 'POST', body: {} }); refreshSummary(); }
   });
   $('#oq').oninput = (e) => { O.q = e.target.value; draw(); };
-  $('#sendDrafts')?.addEventListener('click', async () => {
-    if (!(await ask({ title: `Send ${nDraft} draft${nDraft === 1 ? '' : 's'}?`, body: 'They go out one at a time during your sending hours, a few minutes apart.', ok: 'Send them' }))) return;
-    const r = await api('/emails/send', { method: 'POST', body: {} }); toast(`${r.count} queued`); refreshSummary(); render();
-  });
   $('#toEmailSet').onclick = () => (state.settingsTab = 'email');
   $('#findPeople').onclick = async (ev) => {
     const b = ev.currentTarget; b.disabled = true; b.textContent = 'Finding people…';
@@ -1079,20 +1104,19 @@ SETTINGS.email = async (el) => {
     <div class="srow"><div class="l"><b>Email guessed addresses</b><span>When no address is public, try first.last@company. Some will bounce.</span></div><div class="ctl">${sw('guess', E.useGuessedEmails)}</div></div>
   </section>
   <section class="panel panel-b"><div class="panel-h" style="padding:0 0 6px"><h2>Who decides</h2></div>
-    <div class="srow"><div class="l"><b>Send outreach automatically</b><span>On: Joblin emails the people it picks as soon as you apply. Off: each email waits on Outreach as a draft until you press Send. Joblin picks people who work at the company now and either recruit for this kind of role (campus, early-career, talent) or work on the team the role is in — Outreach shows why for each person.</span></div><div class="ctl">${sw('autoSend', E.autoSend)}</div></div>
+    <div class="srow"><div class="l"><b>Send outreach automatically</b><span>On: each email is scheduled as soon as you apply and goes out in your sending hours — open it on Outreach to edit or reschedule before then. Off: emails wait as drafts until you send them. Joblin picks people who work at the company now and either recruit for this kind of role (campus, early-career, talent) or work on the team the role is in — Outreach shows why for each person.</span></div><div class="ctl">${sw('autoSend', E.autoSend !== false)}</div></div>
     <div class="srow"><div class="l"><b>Answer replies automatically</b><span>When someone writes back, Joblin drafts a short, friendly answer in your voice. On: it sends it. Off: it waits on Outreach for you to check. Replies always show a badge in the sidebar.</span></div><div class="ctl">${sw('autoReply', E.autoReply)}</div></div>
   </section>
   <section class="panel panel-b"><div class="panel-h" style="padding:0 0 10px"><h2>Your emails</h2>
       <div class="right"><div class="seg" id="etKind"><button data-k="intro" class="on">First email</button><button data-k="followup">Follow-up</button></div> <button class="btn sm ghost" id="etReset">Reset to Joblin’s version</button></div></div>
-    <p class="muted" style="font-size:13px;margin:0 0 8px;max-width:72ch">Write it the way you'd write it. The first line is the subject. Fields in double braces are filled in for each person: ${['first_name', 'company', 'role', 'personal_line', 'track_pitch', 'name', 'phone', 'linkedin_line'].map((x) => `<code>{{${x}}}</code>`).join(' ')}. <code>{{personal_line}}</code> is one sentence Joblin writes about what that company works on.</p>
-    <textarea id="etText" rows="14" style="width:100%;font-family:inherit;font-size:14px;line-height:1.5"></textarea></section>
+    <div id="etEd"></div>
+    <p class="muted" style="font-size:12.5px;margin:8px 0 0">Write it the way you'd write it; the first line is the subject. Type <b>/</b> to insert a field like their first name, the company or the role. Fields show in blue and are filled in for each person. “A line about their work” is one sentence Joblin writes about what that company does.</p></section>
   <div><button class="btn primary" id="saveE">Save email settings</button></div>`;
   const T = { intro: E.templates?.intro || E.defaultTemplates?.intro || '', followup: E.templates?.followup || E.defaultTemplates?.followup || '' };
-  let etk = 'intro';
-  $('#etText').value = T[etk];
-  $$('#etKind button').forEach((b) => b.onclick = () => { T[etk] = $('#etText').value; etk = b.dataset.k; $$('#etKind button').forEach((x) => x.classList.toggle('on', x === b)); $('#etText').value = T[etk]; });
-  $('#etReset').onclick = () => { $('#etText').value = E.defaultTemplates?.[etk] || ''; $('#etText').dispatchEvent(new Event('input', { bubbles: true })); };
-  const tpl = () => { T[etk] = $('#etText').value; const o = {}; for (const k of ['intro', 'followup']) o[k] = T[k].trim() === (E.defaultTemplates?.[k] || '').trim() ? '' : T[k]; return o; };
+  let etk = 'intro', getEt = slashEditor($('#etEd'), T[etk], EMAIL_TOKENS);
+  $$('#etKind button').forEach((b) => b.onclick = () => { T[etk] = getEt(); etk = b.dataset.k; $$('#etKind button').forEach((x) => x.classList.toggle('on', x === b)); getEt = slashEditor($('#etEd'), T[etk], EMAIL_TOKENS); });
+  $('#etReset').onclick = () => { T[etk] = E.defaultTemplates?.[etk] || ''; getEt = slashEditor($('#etEd'), T[etk], EMAIL_TOKENS); $('#etEd').dispatchEvent(new Event('input', { bubbles: true })); };
+  const tpl = () => { T[etk] = getEt(); const o = {}; for (const k of ['intro', 'followup']) o[k] = T[k].trim() === (E.defaultTemplates?.[k] || '').trim() ? '' : T[k]; return o; };
   const cl = (v, lo, hi, d) => Math.max(lo, Math.min(hi, Number(v) || d));
   $('#saveE').onclick = () => saveSettings({ email: { enabled: $('#emOn').checked, dailyCap: cl($('#cap').value, 1, 60, 40), sendWindow: { startHour: cl($('#h1').value, 0, 23, 8), endHour: cl($('#h2').value, 1, 24, 17) }, followUpAfterDays: cl($('#fu').value, 1, 10, 5), maxContactsPerJob: cl($('#per').value, 1, 5, 2), minGapMinutes: 2, maxGapMinutes: 6, useGuessedEmails: $('#guess').checked, autoSend: $('#autoSend').checked, autoReply: $('#autoReply').checked, templates: tpl() } }, 'Email settings saved');
 };
@@ -1402,9 +1426,12 @@ SETTINGS.resumes = async (el) => {
 // ---------- Cover letters: a template per resume type, "/" inserts a field ----------
 const TOKENS = [['company', 'Company'], ['role', 'Role'], ['company_focus', 'What the company does'], ['role_focus', 'What the role does'], ['name', 'Your name'], ['first_name', 'First name'],
   ['school', 'School'], ['major', 'Major'], ['degree', 'Degree'], ['graduation', 'Graduation date'], ['current_employer', 'Current employer'], ['current_title', 'Current title'], ['city', 'City']];
-const tokLabel = (k) => (TOKENS.find((t) => t[0] === k) || [k, k])[1];
-function tplToHTML(text) {
-  return esc(text).replace(/\{\{(\w+)\}\}/g, (_, k) => `<span class="tok" contenteditable="false" data-k="${k}">${esc(tokLabel(k))}</span>`);
+// Fields you can type with "/" in an email template. first_name here is the person you're writing to.
+const EMAIL_TOKENS = [['first_name', 'Their first name'], ['company', 'Company'], ['role', 'Role'], ['personal_line', 'A line about their work'], ['track_pitch', 'Your one-line intro'],
+  ['name', 'Your name'], ['phone', 'Your phone'], ['linkedin_line', 'Your LinkedIn']];
+const tokLabel = (k, list = TOKENS) => (list.find((t) => t[0] === k) || [k, k])[1];
+function tplToHTML(text, list = TOKENS) {
+  return esc(text).replace(/\{\{(\w+)\}\}/g, (_, k) => `<span class="tok" contenteditable="false" data-k="${k}">${esc(tokLabel(k, list))}</span>`);
 }
 function htmlToTpl(el) {
   let out = '';
@@ -1419,9 +1446,9 @@ function htmlToTpl(el) {
   walk(el);
   return out.replace(/ /g, ' ');
 }
-function slashEditor(el, text) {
+function slashEditor(el, text, list = TOKENS) {
   el.className = 'tpl-ed'; el.setAttribute('contenteditable', 'plaintext-only'); el.spellcheck = true;
-  el.innerHTML = tplToHTML(text);
+  el.innerHTML = tplToHTML(text, list);
   const menu = document.createElement('div'); menu.className = 'dd-menu slash-menu'; menu.hidden = true; document.body.appendChild(menu);
   let items = [], active = 0, range = null;
   const close = () => { menu.hidden = true; range = null; };
@@ -1430,7 +1457,7 @@ function slashEditor(el, text) {
     const sel = getSelection(); sel.removeAllRanges(); sel.addRange(range);
     const node = range.startContainer, off = range.startOffset, txt = node.nodeValue || '', at = txt.lastIndexOf('/', off - 1);
     const r = document.createRange(); r.setStart(node, at); r.setEnd(node, off); r.deleteContents();
-    const tok = document.createElement('span'); tok.className = 'tok'; tok.contentEditable = 'false'; tok.dataset.k = k; tok.textContent = tokLabel(k);
+    const tok = document.createElement('span'); tok.className = 'tok'; tok.contentEditable = 'false'; tok.dataset.k = k; tok.textContent = tokLabel(k, list);
     r.insertNode(tok);
     const space = document.createTextNode(' '); tok.after(space);
     const after = document.createRange(); after.setStart(space, 1); after.collapse(true); sel.removeAllRanges(); sel.addRange(after);
@@ -1442,7 +1469,7 @@ function slashEditor(el, text) {
     if (node.nodeType !== 3) return close();
     const before = node.nodeValue.slice(0, r.startOffset), m = before.match(/(?:^|\s)\/(\w*)$/);
     if (!m) return close();
-    items = TOKENS.filter(([k, l]) => !m[1] || k.includes(m[1].toLowerCase()) || l.toLowerCase().includes(m[1].toLowerCase()));
+    items = list.filter(([k, l]) => !m[1] || k.includes(m[1].toLowerCase()) || l.toLowerCase().includes(m[1].toLowerCase()));
     if (!items.length) return close();
     range = r.cloneRange(); active = 0;
     menu.innerHTML = items.map(([k, l], i) => `<div class="dd-opt ${i === 0 ? 'active' : ''}" data-k="${k}"><span class="tok sm">${esc(l)}</span></div>`).join('');
@@ -1547,6 +1574,7 @@ const sig = () => JSON.stringify([S.byStatus, S.pendingAnswers, S.pendingReview,
     const now = sig();
     const busyHere = (document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName))
       || document.querySelector('.modal-back, .dd-menu:not([hidden]), .tip:not([hidden])')
+      || document.activeElement?.isContentEditable || $('#view .emailedit, #view details[open]')
       || $$('#view [data-pick]:checked').length || window.getSelection()?.toString();
     if (now !== lastSig && lastSig && !busyHere && LIVE.includes(route())) render();
     if (!busyHere) lastSig = now;

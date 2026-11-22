@@ -104,9 +104,9 @@ export async function chat(message, actions) {
     if (job) {
       const n = Math.min(5, Number(text.match(/\b([1-5])\b/)?.[1]) || 3);
       moreOutreachFor(job, n).then((fresh) => say('joblin', fresh.length
-        ? `Heh, found ${fresh.length} more at ${job.company}: ${fresh.map((c) => c.name).join(', ')}. ${config.email.autoSend ? 'Their emails are queued.' : 'Drafts are waiting on Outreach.'}`
+        ? `Heh, found ${fresh.length} more at ${job.company}: ${fresh.map((c) => c.name).join(', ')}. ${config.email.autoSend !== false ? 'Their emails are queued.' : 'Drafts are waiting on Outreach.'}`
         : `Sniffed all around ${job.company} and found nobody new for ${job.title}. Try again in a few days?`)).catch(() => {});
-      const reply = `${pick(GOBLIN.go)} Digging up ${n} more people at ${job.company} who work near the ${job.title} role. I’ll write ${config.email.autoSend ? 'and queue' : 'drafts for'} them — check Outreach in a minute or two.`;
+      const reply = `${pick(GOBLIN.go)} Digging up ${n} more people at ${job.company} who work near the ${job.title} role. I’ll write ${config.email.autoSend !== false ? 'and queue' : 'drafts for'} them — check Outreach in a minute or two.`;
       say('joblin', reply);
       return { reply };
     }

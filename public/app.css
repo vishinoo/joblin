@@ -476,3 +476,5 @@ tr.grouprow td { background: var(--canvas); color: var(--muted); font-size: 12px
 .replybox { margin-top: 8px; padding: 8px 10px; border-left: 3px solid var(--accent); background: var(--canvas); border-radius: 6px; font-size: 13px; max-width: 560px; }
 .emailedit { display: grid; gap: 8px; margin-top: 10px; max-width: 560px; }
 .emailedit textarea { width: 100%; font: inherit; font-size: 13.5px; line-height: 1.5; }
+.schedwrap { display: inline-flex; gap: 6px; align-items: center; }
+.schedwrap input { width: auto; padding: 4px 8px; font-size: 13px; }

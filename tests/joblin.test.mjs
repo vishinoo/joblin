@@ -111,3 +111,34 @@ test('inbox: newsletters that mention a company never count as replies', async (
   assert.equal(matchJob('no-reply@greenhouse.io', 'Your application to Lyft', 'Business Systems Engineer Intern', jobs)?.id, 2);
   assert.equal(matchJob('recruiting@later.com', 'Next steps', '', jobs)?.id, 1);
 });
+
+test('phone fields: your own country code, digits only', async () => {
+  const { _ruleFor: ruleFor } = await import('../src/apply/apply.js');
+  config.profile.phone = '+1 250-608-6197'; config.profile.country = 'Canada';
+  assert.equal(ruleFor('Phone country code'), 'Canada');
+  assert.equal(ruleFor('Mobile phone number'), '2506086197');
+  config.profile.country = 'United Kingdom';
+  assert.equal(ruleFor('Phone country code'), 'United Kingdom');
+});
+
+test('outreach emails: short role names and no mail-merge lines', async () => {
+  const { shortRole, emailTemplate } = await import('../src/email/mailer.js');
+  assert.equal(shortRole('Summer 2027 Tax Consulting Intern - Canada'), 'Tax Consulting Intern');
+  assert.equal(shortRole('[Summer 2027 Canada] Software Engineer Intern, Engine'), 'Software Engineer Intern, Engine');
+  assert.equal(shortRole('Software Engineer Intern, Summer 2027'), 'Software Engineer Intern');
+  assert.equal(shortRole('Analyst'), 'Analyst');
+  assert.doesNotMatch(emailTemplate('intro'), /reply "?stop|prefer not to hear/i);
+  config.email.templates = { intro: 'Subject: Hi\n\nMy own words' };
+  assert.equal(emailTemplate('intro'), 'Subject: Hi\n\nMy own words');
+  config.email.templates = { intro: '' };
+});
+
+test('chat: "more emails to <company>" finds the application you mean', async () => {
+  const { db } = await import('../src/core/db.js');
+  const { jobNamedIn } = await import('../src/email/contacts.js');
+  const id = db.prepare(`INSERT INTO jobs (title, company) VALUES ('Tax Intern', 'Ryan')`).run().lastInsertRowid;
+  db.prepare(`INSERT INTO applications (job_id, status) VALUES (?, 'submitted')`).run(id);
+  assert.equal(jobNamedIn('I want more messages to Ryan')?.id, id);
+  assert.equal(jobNamedIn('more people at ryan please')?.id, id);
+  assert.equal(jobNamedIn('more people at Bryant'), null);
+});

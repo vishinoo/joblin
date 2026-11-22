@@ -107,7 +107,7 @@
     "maxContactsPerJob": 2,
     "useGuessedEmails": true,
     "hunterApiKey": "",
-    "autoSend": false,
+    "autoSend": true,
     "autoReply": false,
     "templates": {
       "intro": "",

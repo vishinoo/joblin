@@ -65,7 +65,10 @@ Respond as JSON: {"line": "..."}`,
 
 // Queue an intro email per contact (follow-ups are queued when the intro actually sends).
 // "Summer 2027 Tax Consulting Intern - Canada" reads better in an email as "Tax Consulting Intern".
-export const shortRole = (t) => String(t || '').replace(/\s*[(\[].*?[)\]]/g, '').replace(/\s+[-–|,]\s+.*$/, '').replace(/^(summer|fall|winter|spring)?\s*20\d\d\s*/i, '').replace(/^(summer|fall|winter|spring)\s+/i, '').trim() || t;
+export const shortRole = (t) => String(t || '').replace(/\s*[(\[].*?[)\]]/g, '').replace(/\s+[-–|]\s+.*$/, '').trim()
+  .replace(/^((summer|fall|winter|spring)\s*)?20\d\d\s+/i, '')
+  .replace(/,?\s*((summer|fall|winter|spring)\s*)?20\d\d\b.*$/i, '').replace(/,\s*(summer|fall|winter|spring)\s*$/i, '')
+  .replace(/^(summer|fall|winter|spring)\s+/i, '').replace(/\s+/g, ' ').trim() || t;
 export async function scheduleOutreach(job, contacts, docs) {
   for (const c of contacts) {
     if (db.prepare('SELECT 1 FROM emails WHERE contact_id = ?').get(c.id)) continue;
@@ -76,8 +79,8 @@ export async function scheduleOutreach(job, contacts, docs) {
       personal_line, track_pitch: trackPitch(docs.track), phone: P.phone,
       linkedin_line: P.linkedin ? `\n${P.linkedin}` : '',
     });
-    // Auto-send off (the default): it waits on Outreach as a draft until you send it.
-    const status = config.email.autoSend ? 'scheduled' : 'draft';
+    // Auto-send (the default): scheduled right away, editable on Outreach until it goes. Off: a draft that waits for you.
+    const status = config.email.autoSend !== false ? 'scheduled' : 'draft';
     db.prepare(`INSERT INTO emails (contact_id, kind, subject, body, status, scheduled_at) VALUES (?, 'intro', ?, ?, ?, datetime('now'))`).run(c.id, subject, body, status);
     log('email', `${status === 'draft' ? 'Drafted' : 'Queued'} intro → ${c.email} (${c.source}) for ${job.company}`);
   }

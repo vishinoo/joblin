@@ -213,13 +213,17 @@ export function startServer(actions) {
       .run(subject ?? null, body ?? null, at, req.params.id);
     res.json({ ok: true });
   });
-  // Send drafts: they join the queue and go out in your sending hours, spaced apart.
-  app.post('/api/emails/send', (req, res) => {
-    const ids = (req.body?.ids || []).map(Number);
-    const n = ids.length
-      ? db.transaction(() => ids.reduce((k, id) => k + db.prepare(`UPDATE emails SET status='scheduled' WHERE id=? AND status='draft'`).run(id).changes, 0))()
-      : db.prepare(`UPDATE emails SET status='scheduled' WHERE status='draft'`).run().changes;
-    res.json({ count: n });
+  // Selected emails: send now (next sending slot), schedule for a time, or discard. Only unsent ones change.
+  app.post('/api/emails/bulk', (req, res) => {
+    const ids = (req.body?.ids || []).map(Number).filter(Boolean);
+    const at = /^\d{4}-\d\d-\d\d \d\d:\d\d(:\d\d)?$/.test(req.body?.at || '') ? req.body.at : null;
+    const sql = { send: `UPDATE emails SET status='scheduled', scheduled_at=datetime('now') WHERE id=? AND status IN ('draft','scheduled')`,
+      schedule: `UPDATE emails SET status='scheduled', scheduled_at=? WHERE id=? AND status IN ('draft','scheduled')`,
+      discard: `UPDATE emails SET status='cancelled' WHERE id=? AND status IN ('draft','scheduled')` }[req.body?.action];
+    if (!sql || (req.body.action === 'schedule' && !at)) return sendErr(res, new Error('Unknown action'));
+    const st = db.prepare(sql);
+    const count = db.transaction(() => ids.reduce((n, id) => n + st.run(...(req.body.action === 'schedule' ? [at, id] : [id])).changes, 0))();
+    res.json({ count });
   });
   app.post('/api/emails/seen', (_req, res) => { db.prepare(`UPDATE emails SET seen = 1 WHERE status = 'replied' AND seen = 0`).run(); res.json({ ok: true }); });
   // "More people at this company" (also from the chat).
