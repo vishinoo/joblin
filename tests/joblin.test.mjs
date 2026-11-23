@@ -154,3 +154,47 @@ test('outreach intro leads with the experience that fits the job; company line n
   assert.equal(topicOk('what we do at Stripe', desc, 'Stripe'), false);
   assert.equal(topicOk('fraud prevention for online businesses', 'fraud prevention for online businesses', 'X'), false); // the prompt's example
 });
+
+test('no guessing: facts come from your profile or you, never from the model', async () => {
+  const { _answer: answer, mapToOption } = await import('../src/apply/apply.js');
+  const job = { id: 999, title: 'Analyst Intern', company: 'Zebra Corp', location: 'Vancouver, BC', description: '' };
+  Object.assign(config.profile, { region: 'BC', major: 'Finance and Business Technology Management' });
+  config.profile.answers.race = 'Asian';
+  // A fact that's worded differently from the options is mapped to the option that means it.
+  assert.equal(await mapToOption('Field of study', 'Finance and Business Technology Management', ['Accounting', 'Computer Science', 'Finance', 'Marketing']), 'Finance');
+  assert.equal(await mapToOption('Race', 'Asian', ['White', 'Asian (Not Hispanic or Latino)', 'Black']), 'Asian (Not Hispanic or Latino)');
+  // No US state is right for someone in BC: "outside the US", never Alabama.
+  assert.equal(await mapToOption('State', 'BC', ['Alabama', 'Alaska', 'Outside the US']), 'Outside the US');
+  // Languages and other facts about you go to you; nothing is made up.
+  assert.equal(await answer('Do you have proficiency in French (reading, speaking, writing)?', job, { options: ['Yes', 'No'] }), '');
+  assert.equal(await answer('What is your citizenship?', job, {}), '');
+  // Things Joblin does know: acknowledgements, availability, prior employment (from your resumes).
+  assert.equal(await answer('By submitting this form you acknowledge the information is accurate', job, { options: ['Yes', 'No'] }), 'Yes');
+  assert.equal(await answer('Are you available to work during the term listed in the posting?', job, { options: ['Yes', 'No'] }), 'Yes');
+  assert.equal(await answer('Have you previously been employed at Zebra Corp?', job, { options: ['Yes', 'No'] }), 'No');
+});
+
+test('experience and credentials are answered from your resume, not with a blanket yes', async () => {
+  const { _answer: answer, mapToOption } = await import('../src/apply/apply.js');
+  const job = { id: 998, title: 'Intern', company: 'Acme Realty', location: 'Vancouver, BC', description: '' };
+  const yn = ['Yes', 'No'];
+  assert.equal(await answer('Have you had previous internship experience in real estate?', job, { options: yn }), 'No');
+  assert.equal(await answer('Do you have an active real estate license?', job, { options: yn }), 'No');
+  assert.equal(await answer('Do you have any friends or relatives working for Acme Realty?', job, { options: yn }), 'No');
+  assert.equal(await answer('Are you comfortable using Excel?', job, { options: yn }), 'Yes'); // ability: yes
+  assert.equal(await answer('If yes, who?', job, {}), '');
+  assert.equal(await mapToOption('Degree', 'Bachelor of Commerce', ['Bachelor of Arts', 'Master of Business Administration (MBA)']), 'Bachelor of Arts');
+});
+
+test('only jobs you can get: no senior, grad-degree, too-early new-grad or off-field roles', async () => {
+  const { whyNot, yearsRequired } = await import('../src/apply/fit.js');
+  config.search.queries = [{ keywords: 'software engineer intern' }, { keywords: 'finance intern' }];
+  Object.assign(config.profile, { degree: 'Bachelor of Commerce', graduationYear: String(new Date().getFullYear() + 2), graduationMonth: 'April' });
+  assert.match(whyNot({ title: 'Software Engineer II - CIAM' }), /entry level/);
+  assert.match(whyNot({ title: "Master's Machine Learning Engineer, Intern" }), /graduate degree/);
+  assert.match(whyNot({ title: 'Software Engineer, New Grad' }), /new graduates/);
+  assert.match(whyNot({ title: 'Content Design Intern' }), /positions/);
+  assert.equal(whyNot({ title: 'Tax Consulting Intern' }), '');
+  assert.equal(whyNot({ title: 'Software Engineer Intern, Backend' }), '');
+  assert.equal(yearsRequired('You have 3+ years of professional experience. 5 years experience preferred.'), 3);
+});

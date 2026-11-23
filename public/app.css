@@ -482,3 +482,7 @@ tr.grouprow td { background: var(--canvas); color: var(--muted); font-size: 12px
 .quickpick .btn { display: grid; text-align: left; gap: 2px; padding: 8px 12px; }
 .quickpick .btn .sub { font-size: 12px; }
 .quickpick .btn.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+details.answers { margin-top: 4px; white-space: normal; }
+details.answers dl { margin: 8px 0 0; max-width: 460px; max-height: 320px; overflow: auto; display: grid; gap: 2px; font-size: 12.5px; }
+details.answers dt { color: var(--muted); margin-top: 6px; }
+details.answers dd { margin: 0; color: var(--ink); }

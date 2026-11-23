@@ -83,7 +83,7 @@ export function startServer(actions) {
 
   app.get('/api/applications', (_req, res) => res.json(db.prepare(`
     SELECT j.id, j.title, j.company, j.location, j.ats, j.apply_url, j.linkedin_url, a.track, a.status, a.notes, a.applied_at, a.updated_at,
-      a.resume_path, a.cover_letter_path, a.match_score, a.proof_path, (SELECT COUNT(*) FROM contacts c WHERE c.job_id = j.id) contacts
+      a.resume_path, a.cover_letter_path, a.match_score, a.proof_path, a.answers_log, (SELECT COUNT(*) FROM contacts c WHERE c.job_id = j.id) contacts
     FROM jobs j JOIN applications a ON a.job_id = j.id WHERE a.status != 'removed' ORDER BY a.updated_at DESC LIMIT 2000`).all()));
 
   app.patch('/api/applications/:id', (req, res) => {

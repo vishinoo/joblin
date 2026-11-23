@@ -10,8 +10,9 @@ import { findContacts } from '../email/contacts.js';
 import { scheduleOutreach } from '../email/mailer.js';
 import { recall, remember, memoryFacts, waitOn } from '../you/memory.js';
 import { waitForCode, canReadInbox } from '../email/inbox.js';
-import { employmentHistory, candidateBackground, homeFor } from '../you/profile.js';
+import { employmentHistory, candidateBackground, homeFor, allPositions } from '../you/profile.js';
 import { countryOf } from '../../public/places.js';
+import { whyNot, companyLoad, MAX_PER_COMPANY } from './fit.js';
 
 export function detectATS(url) {
   const u = (url || '').toLowerCase();
@@ -49,7 +50,10 @@ const RULES = [
   [/\bmajor\b|discipline|field of study|area of study|program of study|concentration|specialization/i, () => P.major],
   [/\bgpa\b|grade point|cumulative average/i, () => P.gpa && (P.gpaScale ? `${P.gpa}` : P.gpa)],
   [/year of study|current year|what year are you|academic year|year in school|class standing/i, () => P.yearOfStudy],
-  [/graduation (date|month)|expected graduation|when (do|will) you graduate/i, () => [P.graduationMonth, P.graduationYear].filter(Boolean).join(' ')],
+  // Graduate-degree and education-level questions: answered from your degree, never guessed.
+  [/(enrolled|pursuing|studying).{0,40}(master|ph\.?d|doctoral|graduate (degree|program))|(master|ph\.?d).{0,30}(program|student|enrolled)/i, () => (/master|ph\.?d|mba/i.test(P.degree || '') ? 'Yes' : 'No')],
+  [/(level of|highest).{0,20}education|degree (are you|you are) (pursuing|completing)|current(ly)? (degree|education)|education level|degree type/i, () => (/master/i.test(P.degree || '') ? "Master's" : /ph\.?d/i.test(P.degree || '') ? 'PhD' : "Bachelor's")],
+  [/graduation (date|month)|expected graduation|anticipated graduation|when (do|will) you graduate|graduation (month|year) and/i, () => [P.graduationMonth, P.graduationYear].filter(Boolean).join(' ')],
   [/pronoun/i, () => P.pronouns || A.pronouns],
   [/hispanic|latin[oax]/i, () => A.hispanic],
   [/sexual orientation/i, () => A.sexualOrientation],
@@ -81,7 +85,13 @@ const RULES = [
   [/school|university|college/i, P.school],
   [/degree/i, P.degree],
   [/graduat/i, P.graduationYear],
-  [/how did you hear|source|referr(ed|al) by|where did you (find|hear)/i, A.howDidYouHear],
+  // Referrals: only a real one counts, so this stays empty (it's never "LinkedIn").
+  [/who referred|referred by|referr(er|al)'?s? name|name of (the )?(person|employee|referr)|employee referral/i, () => ''],
+  [/how did you (first )?(hear|learn|find)|where did you (find|hear|learn)|how were you referred|^source$/i, A.howDidYouHear],
+  // Follow-ups to a question answered "no" ("If yes, who?") stay empty.
+  [/^if (yes|so)\b/i, () => ''],
+  [/(friends?|relatives?|family( members?)?).{0,40}(work|employ)/i, () => A.relativesAtCompany || 'No'],
+  [/(closest|nearest) to|which (office|location|city|hub) (are you|is closest|would you|do you)/i, () => here().city],
   [/relocat/i, A.willingToRelocate],
   [/salary|compensation|pay expectation/i, A.salaryExpectation],
   [/start date|available to start|earliest start|availability/i, A.startDate],
@@ -155,6 +165,68 @@ const SKILL_Q = /experience (with|in|using|building|working)|familiar|comfortabl
 // Questions that want a written answer (a paragraph, not a word).
 const isLong = (label, tag) => tag === 'textarea' || /paragraph|describe|tell us|explain|walk us|example|why|words or less|in \d+ ?-? ?\d* (sentences|words)/i.test(label);
 
+// ---------- No guessing ----------
+// The model may only answer what it can't get wrong about you: skill questions (from your real background),
+// written answers, and preference questions ("which team interests you most"). Facts about you come from your
+// profile, your resumes or your own saved answers — and if they aren't there, the question goes to you
+// (once; your answer is reused everywhere). A fact that doesn't match any option is mapped to the option that
+// means the same thing, or to "not applicable" — never to a random option (no more "Alabama").
+const LANG = /\b(french|english|spanish|mandarin|cantonese|chinese|german|japanese|korean|hindi|punjabi|urdu|arabic|portuguese|italian|russian|tagalog|vietnamese|languages?|bilingual|fluen\w*)\b/i;
+const ACK = /acknowledge|i (have )?read|i understand|i agree|i consent|i certify|i confirm|consent to|agree to|attest|by (submitting|checking|signing)/i;
+const PRIOR = /(previously|ever|currently|before|formerly|in the past).{0,50}(employed|worked|work|intern\w*|contract\w*|provided services|applied)|(employed|worked|applied|interned) (at|for|with|to) (a |an |any )?\w+ (entity|subsidiar|affiliate)|current or former (employee|contractor)/i;
+const YESNO = /^(are|can|will|would|do|did|is|have|has|were|was)\b/i;
+const AVAIL = /available (to work|for (a|an|the)|during)|during the (term|internship|period)|able to (commute|work|relocate|travel|attend)|willing to (relocate|travel|commute|work)|on-?site|in-?office|hybrid|in person|background check|drug (test|screen)|\b18\+|18 years|at least 18|legal age|work (weekends|overtime|evenings|shifts)|reliable transportation/i;
+const JUDGMENT = /prefer|preference|most interested|interested in|which (team|track|area|location|office|term|program|role|discipline|of these|product|group)|top \d|rank|how did you (first )?(hear|learn|find)|where did you (hear|learn|find)|strongest|engineering (type|profile)|area of interest/i;
+const NA_OPT = /not applicable|^n\/?a\b|outside (the )?(us|u\.s|united states|canada)|non-?us|international|other|none of|prefer not|decline|don.?t wish/i;
+const optNorm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+const yesOpt = (opts) => opts.find((o) => /^(yes|i am|i will|i can|i have|i agree|i acknowledge|i understand|i consent|i confirm|agree|acknowledge|willing|able)\b/i.test(o.trim()) && !/\bnot\b|n.?t\b|disagree/i.test(o));
+const noOpt = (opts) => opts.find((o) => /^(no|i have not|i haven.?t|never|i am not|i do not|i don.?t)\b/i.test(o.trim()));
+
+// A known fact → the option that says the same thing ("BC" → "British Columbia"; "Finance and Business Technology
+// Management" → "Finance"). Exact and word matches first; the model only maps, and may say there's no match.
+// Degree level: "Bachelor of Commerce, …" only ever maps to a bachelor's option (never "MBA").
+const LEVELS = [['bachelor', /bachelor|undergrad|\bb\.?(sc|a|com|eng|ba)\b|\bbba\b/i], ['master', /master|\bmba\b|\bm\.?(sc|a|eng)\b/i], ['phd', /ph\.?d|doctor/i], ['diploma', /diploma|college|associate/i], ['high school', /high school|secondary|ged/i]];
+const levelOf = (s) => LEVELS.find(([, re]) => re.test(s))?.[0];
+export async function mapToOption(label, fact, opts) {
+  const lvl = levelOf(fact);
+  if (lvl && opts.some((o) => levelOf(o))) {
+    const same = opts.filter((o) => levelOf(o) === lvl);
+    return same.sort((x, y) => (optNorm(fact).split(' ').filter((w) => optNorm(y).includes(w)).length) - (optNorm(fact).split(' ').filter((w) => optNorm(x).includes(w)).length))[0] || opts.find((o) => NA_OPT.test(o)) || '';
+  }
+  const f = optNorm(fact);
+  const hit = opts.find((o) => optNorm(o) === f) || opts.find((o) => optNorm(o).startsWith(f) || f.startsWith(optNorm(o)) && optNorm(o).length > 3)
+    || opts.filter((o) => optNorm(o).length > 3 && ` ${f} `.includes(` ${optNorm(o)} `)).sort((x, y) => optNorm(y).length - optNorm(x).length)[0];
+  if (hit) return hit;
+  const out = await generateJSON(
+    `A form asks: "${label}". The true answer is "${fact}". Which option below means the same thing as the true answer?
+If no option clearly means the same thing, answer "NONE". Never pick an option just because it is close or first.
+Options: ${JSON.stringify(opts.slice(0, 80))}
+Respond as JSON: {"option": "..."}`, { option: 'NONE' }, { temperature: 0, maxTokens: 60 });
+  const pick = opts.find((o) => optNorm(o) === optNorm(out.option));
+  return pick || opts.find((o) => NA_OPT.test(o)) || '';
+}
+
+const CRED = /\b(licen[cs]e[ds]?|certif\w*|designation|accredit\w*|registered|chartered|cpa|cfa|frm|cma|series \d+|csc|pmp)\b/i;
+const HISTORY = /(have you (had|got|gained)|do you have).{0,40}(previous|prior|any|related)?.{0,20}(experience|internship|work)|previous (internship )?experience|prior experience|(shown|demonstrated) .{0,40}(interest|experience) .{0,30}through/i;
+const STOPW = new Set('have had you your any previous prior experience internship internships work worked related with the and for this that note not required participation program summer through such involvement relevant coursework industry memberships clubs strong interest shown demonstrated gained in of or to a an is are do'.split(' '));
+// The subject of an experience question ("real estate sales") must appear in your real background.
+function hasExperienceIn(label) {
+  const subject = (label.split(/note:|\?/i)[0].match(/(?:experience|internship|interest)\s+(?:in|with|of|at)\s+([^?,.]+)/i)?.[1] || label.split(/note:|\?/i)[0]);
+  const words = subject.toLowerCase().split(/[^a-z&+]+/).filter((w) => w.length > 2 && !STOPW.has(w));
+  if (!words.length) return true;
+  const bg = candidateBackground({ maxChars: 99999 }).toLowerCase();
+  return words.every((w) => bg.includes(w.replace(/s$/, '')));
+}
+
+// Have you worked at / applied to this company before? Known from your resumes and your own applications.
+function priorAnswer(label, job) {
+  const co = optNorm(job.company).split(' ')[0];
+  if (/applied/i.test(label) && !/employ|work/i.test(label)) {
+    return db.prepare(`SELECT 1 FROM applications a JOIN jobs j ON j.id = a.job_id WHERE lower(j.company) LIKE ? AND j.id != ? AND a.status IN ('submitted','interview','offer','rejected')`).get(`%${co}%`, job.id || 0) ? 'yes' : 'no';
+  }
+  return allPositions().some((p) => optNorm(p.org).split(' ')[0] === co) ? 'yes' : 'no';
+}
+
 async function answer(label, job, { options = null, required = false, rule, long = false } = {}) {
   const opts = options?.length ? options : null;
   long = long || (!opts && isLong(label));
@@ -162,17 +234,47 @@ async function answer(label, job, { options = null, required = false, rule, long
   if (mem?.source === 'you') return mem.answer; // anything you wrote yourself always wins
   const r = rule !== undefined ? rule : ruleFor(label);
   if (r) return r;
+  // Your profile knows this, but the caller couldn't match it to an option: map it, never guess.
+  const known = ruleFor(label);
+  if (known && opts) return mapToOption(label, known, opts);
+  const ask = () => { remember(label, '', { options: opts, company: job.company }); return ''; }; // goes to you, once
+  const lang = LANG.test(label);
+  if (lang) return ask(); // languages you speak: only you know
+  if (ACK.test(label)) return opts ? (yesOpt(opts) || '') : 'Yes';
+  if (PRIOR.test(label) && (opts || YESNO.test(label))) {
+    const yn = priorAnswer(label, job);
+    return opts ? ((yn === 'yes' ? yesOpt(opts) : noOpt(opts)) || ask()) : (yn === 'yes' ? 'Yes' : 'No');
+  }
+  if (AVAIL.test(label) && (YESNO.test(label) || opts?.some((o) => /^yes\b/i.test(o)))) {
+    const yes = !/relocat/i.test(label) || A.willingToRelocate !== 'No';
+    return opts ? ((yes ? yesOpt(opts) : noOpt(opts)) || ask()) : (yes ? 'Yes' : 'No');
+  }
+  // Licences and certifications: yes only when your resume says so.
+  if (CRED.test(label) && (opts || YESNO.test(label))) {
+    const what = (label.match(CRED) || [''])[0];
+    // A licence must be named on your resume as one (just the word "license" in a bullet doesn't count).
+    const has = !/licen[cs]e/i.test(what) && candidateBackground({ maxChars: 99999 }).toLowerCase().includes(what.toLowerCase());
+    return opts ? ((has ? yesOpt(opts) : noOpt(opts)) || ask()) : (has ? 'Yes' : 'No');
+  }
+  // "Have you had experience in X?" is history, not ability: yes only when X shows up in your background.
+  if (HISTORY.test(label) && (opts?.some((o) => /^(yes|no)/i.test(o)) || YESNO.test(label))) {
+    const yn = hasExperienceIn(label) ? 'yes' : 'no';
+    return opts ? ((yn === 'yes' ? yesOpt(opts) : noOpt(opts)) || ask()) : (yn === 'yes' ? 'Yes' : 'No');
+  }
   // Written answers are never saved or reused: each application gets one written fresh for that job.
   if (long) return llmAnswer(label, null, job, { mustAnswer: true, skill: SKILL_Q.test(label), long: true });
-  if (mem) return mem.answer;
   const skill = SKILL_Q.test(label);
-  if (FACTUAL.test(label) && !skill) { remember(label, '', { options: opts, company: job.company }); return ''; } // ask you instead
+  if (FACTUAL.test(label) && !skill) return ask();
   if (skill && opts) { // yes/no about a skill: yes
     const yes = opts.find((o) => /^yes\b|^i (have|am|can)|^extremely|^very/i.test(o.trim()));
     if (yes) { remember(label, yes, { options: opts, company: job.company }); return yes; }
   }
+  // Only skills (from your real background) and preferences are the model's call. Everything else is a fact: ask.
+  if (!skill && !JUDGMENT.test(label)) return ask();
+  if (mem) return mem.answer;
   let a = await llmAnswer(label, opts, job, { mustAnswer: required || skill, skill });
-  if (!a && required && !opts) a = await llmAnswer(label, null, job, { mustAnswer: true, skill });
+  if (opts && a && !opts.includes(a)) a = opts.find((o) => optNorm(o) === optNorm(a)) || '';
+  if (!a) return ask();
   remember(label, a, { options: opts, company: job.company });
   return a;
 }
@@ -243,8 +345,11 @@ const loc = (frame, f) => f.id ? frame.locator(`[id="${f.id}"]`)
   : frame.locator(`[data-jobert="${f.idx}"]`);
 
 async function fillForm(frame, job, docs, { scope = '' } = {}) {
+  fillForm.log ??= [];
   JOB = job;
   const unanswered = [];
+  // Every answer typed or picked, saved on the application so you can check exactly what was sent.
+  const said = (q, a) => { if (q && a != null && a !== '') fillForm.log.push({ q: String(q).slice(0, 200), a: String(a).slice(0, 400) }); };
   const fields = await scanFields(frame, scope);
   if (process.env.JOBERT_DEBUG) console.log(`[debug] ${fields.length} fields in ${frame.url()}`, fields.map((f) => `${f.label}|${f.type}|${f.visible}`).slice(0, 15));
   const radioGroups = new Map();
@@ -259,6 +364,7 @@ async function fillForm(frame, job, docs, { scope = '' } = {}) {
         if (/transcript|grades/i.test(what)) { if (P.transcriptFile) await el.setInputFiles(P.transcriptFile); else if (f.required) unanswered.push(label); continue; }
         if (/portfolio|work sample|writing sample|other|additional/i.test(what) && !/resume|cv|cover/i.test(what)) continue;
         await el.setInputFiles(/cover/i.test(what) ? docs.letterPath : docs.resumePath);
+        said(label || 'File', /cover/i.test(what) ? 'Cover letter (PDF)' : 'Resume (PDF)');
         continue;
       }
       // Radio buttons are often drawn as styled boxes with the real (0×0) input hidden, so they're grouped
@@ -276,7 +382,7 @@ async function fillForm(frame, job, docs, { scope = '' } = {}) {
           n.closest('fieldset')?.querySelector('legend')?.innerText || window.nearQuestion?.(n) || ''].join(' ')).catch(() => '') : label;
         if (f.type === 'checkbox' && /agree|consent|acknowledge|certify|privacy|terms/i.test(boxText) && !/marketing|newsletter|promotional|text messages|sms/i.test(boxText)) {
           // Styled boxes (LinkedIn) hide the real input: force it, then click its label if it still isn't ticked.
-          await el.check({ force: true }).catch(() => {});
+          await el.check({ force: true }).catch(() => {}); said(boxText.trim().slice(0, 160), 'Checked');
           if (!(await el.isChecked().catch(() => true))) {
             const id = await el.getAttribute('id').catch(() => null);
             await (id ? frame.locator(`label[for="${id}"]`) : el.locator('xpath=..')).first().click({ force: true }).catch(() => {});
@@ -345,7 +451,7 @@ async function fillForm(frame, job, docs, { scope = '' } = {}) {
         if (mine?.source === 'you' && !(fromProfile !== undefined && match(fromProfile))) pick = match(mine.answer) || pick;
         if (!pick && (f.required || rule)) pick = match(await answer(label, job, { options: opts, required: f.required, rule: null }));
         if (process.env.JOBERT_DEBUG) console.log('[debug] combo', label, '| rule:', rule, '| opts:', opts.slice(0, 6), '→', pick);
-        if (pick) await frame.locator(await optSel()).filter({ hasText: pick }).first().click();
+        if (pick) { await frame.locator(await optSel()).filter({ hasText: pick }).first().click(); said(label, pick); }
         else { await el.press('Escape').catch(() => {}); if (f.required) unanswered.push(label); }
         continue;
       }
@@ -358,15 +464,16 @@ async function fillForm(frame, job, docs, { scope = '' } = {}) {
         if (mine?.source === 'you') ans = mine.answer;
         let pick = (ans && match(ans)) || (/decline|not (want|wish)/i.test(ans || '') ? f.options.find((o) => /decline|don.?t wish|prefer not|not to (answer|say|disclose)|do not want/i.test(o)) : null);
         if (!pick) pick = match(await answer(label, job, { options: f.options, required: f.required, rule: null }));
-        if (pick) await el.selectOption({ label: pick }); else if (f.required) unanswered.push(label);
+        if (process.env.JOBERT_DEBUG) console.log('[debug] select', label, '| options:', f.options.slice(0, 30), '→', pick);
+        if (pick) { await el.selectOption({ label: pick }); said(label, pick); } else if (f.required) unanswered.push(label);
         continue;
       }
 
-      if (/cover letter/i.test(label) && f.tag === 'textarea') { await el.fill(docs.letterText); continue; }
-      if (f.tag === 'textarea' && !SKILL_Q.test(label) && /\bwhy\b|interest|motivat|about yourself|additional information|good fit|great fit|make[s]? you|stand out|what draws|excite/i.test(label) && recall(label, { company: job.company })?.source !== 'you') {
+      if (/cover letter/i.test(label) && f.tag === 'textarea') { await el.fill(docs.letterText); said(label, 'Cover letter text'); continue; }
+      if (f.tag === 'textarea' && !SKILL_Q.test(label) && /\bwhy\b|interest|motivat|about yourself|good fit|great fit|make[s]? you|stand out|what draws|excite/i.test(label) && recall(label, { company: job.company })?.source !== 'you') {
         // Reuse the tailored cover letter body (skip greeting/sign-off) for motivation questions.
         const paras = docs.letterText.split(/\n\n+/).slice(1, 3).join('\n\n').replace(/^I am writing to apply[^.]*\.\s*/, '');
-        await el.fill(paras);
+        await el.fill(paras); said(label, paras);
         continue;
       }
       let ans = contextRule(f, job) ?? (recall(label, { company: job.company })?.source === 'you' ? null : ruleFor(label));
@@ -381,7 +488,8 @@ async function fillForm(frame, job, docs, { scope = '' } = {}) {
         if (/how many|number of|years of/i.test(label) && /\d/.test(ans) && (numeric || f.tag === 'input')) ans = ans.match(/\d+(\.\d+)?/)[0];
         const maxLen = Number(await el.getAttribute('maxlength').catch(() => 0)) || 0;
         if (maxLen > 0 && ans.length > maxLen) ans = ans.slice(0, maxLen);
-        await el.fill(ans);
+        if (PHONE.test(label) && !DIAL.test(label) && /^[\d\s().+-]{7,}$/.test(ans)) ans = ans.replace(/^\s*\+\d{1,3}[\s.-]+/, '').replace(/\D/g, '');
+        await el.fill(ans); said(label, ans);
         // Typeahead comboboxes (Greenhouse location, Ashby): pick the first suggestion.
         if (f.type === 'text' && /\b(location|city|school)\b/i.test(label)) {
           await jitter(700, 1200);
@@ -408,9 +516,10 @@ async function fillForm(frame, job, docs, { scope = '' } = {}) {
     const DECL = /decline|don.?t wish|do not wish|prefer not|not to (answer|say|disclose)|do not want|don.?t want|choose not/i;
     let i = want ? optLabels.findIndex((l) => l.trim().toLowerCase().startsWith(String(want).toLowerCase())) : -1;
     if (i < 0 && DECL.test(want || '')) i = optLabels.findIndex((l) => DECL.test(l));
+    if (i < 0 && want) { const m = await mapToOption(question, want, optLabels.map((l) => l.trim()).filter(Boolean)); i = m ? optLabels.findIndex((l) => l.trim() === m) : -1; }
     if (i >= 0) {
       const box = frame.locator(`[data-jobert="${group[i].idx}"]`);
-      await box.check({ force: true }).catch(() => {});
+      await box.check({ force: true }).catch(() => {}); said(question, optLabels[i].trim());
       // Styled radios: if the hidden input didn't take the click, click the visible option next to it.
       if (!(await box.isChecked().catch(() => true))) await box.locator('xpath=..').click({ force: true }).catch(() => {});
     }
@@ -550,6 +659,8 @@ export async function prepareBatch(limit = config.mode.batchSize, onProgress = (
     while (next < jobs.length && !config.stopFind) {
       const job = jobs[next++];
       onProgress({ done, total: jobs.length, current: `${job.title} · ${job.company}` });
+      const no = whyNot(job); // not worth applying to: skip before writing anything
+      if (no) { setStatus(job.id, 'skipped', no); log('prepare', `Skipped ${job.title} @ ${job.company}: ${no}`); done++; continue; }
       try { await prepareJob(job); log('prepare', `Prepared ${job.title} @ ${job.company}`); }
       catch (e) { setStatus(job.id, 'failed', `prepare: ${e.message}`); log('error', `prepare ${job.company}: ${e.message}`); }
       done++;
@@ -659,11 +770,24 @@ async function easyApply(job, docs, { dryRun = false } = {}) {
   } finally { await page.goto('about:blank').catch(() => {}); }
 }
 
-export async function processJob(job, { dryRun = false } = {}) {
+// Runs one application and keeps the list of everything Joblin answered on it (Applications → Answers).
+export async function processJob(job, opts = {}) {
+  fillForm.log = [];
+  try { return await applyOne(job, opts); }
+  finally { if (fillForm.log.length) db.prepare('UPDATE applications SET answers_log = ? WHERE job_id = ?').run(JSON.stringify(fillForm.log), job.id); }
+}
+async function applyOne(job, { dryRun = false } = {}) {
   let app = db.prepare('SELECT * FROM applications WHERE job_id = ?').get(job.id);
   if (!app?.resume_path) { await prepareJob(job); app = db.prepare('SELECT * FROM applications WHERE job_id = ?').get(job.id); }
   const docs = { track: app.track, resumePath: app.resume_path, letterPath: app.cover_letter_path, letterText: app.cover_letter_text };
 
+  // Last check before anything is sent: still a job you can get, and not too many at one company.
+  const no = whyNot(job);
+  if (no) { setStatus(job.id, 'skipped', no); log('apply', `Skipped ${job.title} @ ${job.company}: ${no}`); return 'skipped'; }
+  if (companyLoad(job) >= MAX_PER_COMPANY()) {
+    setStatus(job.id, 'skipped', `Already ${MAX_PER_COMPANY()} applications at ${job.company} — more looks like spam to their recruiters`);
+    log('apply', `Skipped ${job.title} @ ${job.company}: company limit`); return 'skipped';
+  }
   const dup = alreadyApplied(job);
   if (dup) { setStatus(job.id, 'duplicate', `You already applied to this role at ${dup.company}`); log('apply', `Skipped duplicate: ${job.title} @ ${job.company}`); return 'skipped'; }
   if (job.easy_apply || job.ats === 'linkedin_easy_apply') {
@@ -744,4 +868,4 @@ export async function applyApproved({ dryRun = false, limit = config.apply.maxAp
   }
   return tally;
 }
-export { contextRule as _contextRule, ruleFor as _ruleFor };
+export { contextRule as _contextRule, ruleFor as _ruleFor, answer as _answer };

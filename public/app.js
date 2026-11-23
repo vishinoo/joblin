@@ -613,6 +613,9 @@ VIEWS.applications = async (view) => {
       <button class="btn sm ghost danger" data-needsel id="bRemove">Remove</button></div></div>
     <table><thead><tr><th style="width:28px"></th><th>Role</th><th>Fit</th><th>Status</th><th>Documents</th><th>When</th></tr></thead><tbody id="rows"></tbody></table></div>`;
   let picked = () => [];
+  // Everything Joblin typed or picked on this application, to check it.
+  const answersOf = (r) => { let L = []; try { L = JSON.parse(r.answers_log || '[]'); } catch {}
+    return L.length ? `<details class="answers"><summary class="link">Answers (${L.length})</summary><dl>${L.map((x) => `<dt>${esc(x.q)}</dt><dd>${esc(x.a.length > 220 ? `${x.a.slice(0, 220)}…` : x.a)}</dd>`).join('')}</dl></details>` : ''; };
   const docs = (r) => r.resume_path ? `<a class="link" target="_blank" href="${fileUrl(r.resume_path)}">Resume</a> · <a class="link" target="_blank" href="${fileUrl(r.cover_letter_path)}">Letter</a>` : '—';
   const draw = () => {
     const pass = APP_FILTERS.find((f) => f[0] === A.filter)[2];
@@ -624,7 +627,7 @@ VIEWS.applications = async (view) => {
       <td>${scoreBadge(r.match_score)}</td>
       <td><div class="stcell">${pill(r.status).replace('class="pill', `class="pill ${statusClass(r.status)}`)}
         <select class="mark" data-id="${r.id}" aria-label="Mark as"><option value="">Mark as…</option>${OUTCOMES.filter(([k]) => k !== r.status).map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select></div></td>
-      <td class="sub" style="white-space:nowrap">${r.proof_path ? `<div><a class="link" target="_blank" href="${fileUrl(r.proof_path, Date.now())}">${r.status === 'submitted' ? 'Confirmation' : 'What happened'}</a></div>` : ''}<div>${docs(r)}</div>
+      <td class="sub" style="white-space:nowrap">${r.proof_path ? `<div><a class="link" target="_blank" href="${fileUrl(r.proof_path, Date.now())}">${r.status === 'submitted' ? 'Confirmation' : 'What happened'}</a></div>` : ''}<div>${docs(r)}</div>${answersOf(r)}
         ${['needs_review', 'failed', 'skipped'].includes(r.status) ? `<div style="margin-top:6px"><button class="btn sm" data-retry="${r.id}">${r.status === 'skipped' ? 'Apply anyway' : 'Try again'}</button></div>` : ''}</td>
       <td class="sub">${when(stamp(r))}</td></tr>`; }).join('') || `<tr><td colspan="6"><div class="empty"><b>Nothing here</b>${A.filter === 'all' ? 'Tell Joblin what to look for and applications will show up here.' : 'No applications in this group.'}</div></td></tr>`;
     $$('[data-retry]').forEach((b) => b.onclick = async () => {

@@ -76,6 +76,7 @@ for (const sql of [
   'ALTER TABLE contacts ADD COLUMN why TEXT', // why Joblin picked this person (shown on Outreach)
   'ALTER TABLE emails ADD COLUMN in_reply_to TEXT', // Message-ID a reply answers (threads it in Gmail)
   'ALTER TABLE emails ADD COLUMN seen INTEGER DEFAULT 0', // you've looked at this reply (sidebar badge)
+  'ALTER TABLE applications ADD COLUMN answers_log TEXT', // JSON [{q, a}]: everything Joblin answered on the form
 ]) { try { db.exec(sql); } catch {} }
 
 export function log(type, message) {

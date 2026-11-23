@@ -18,7 +18,7 @@ const fieldOf = (q) => {
   const k = q.keywords.toLowerCase();
   return FIELDS[0].words.test(k) || FIELDS[1].words.test(k) ? 'finance' : 'swe';
 };
-export const noteFocus = (queries) => kv.set('searchFocus', [...kv.get('searchFocus', []), ...queries.map((q) => ({ field: fieldOf(q), at: Date.now() }))].slice(-30));
+export const noteFocus = (queries) => kv.set('searchFocus', [...kv.get('searchFocus', []), ...queries.map((q) => ({ field: fieldOf(q), kw: q.keywords, at: Date.now() }))].slice(-30));
 export function fairOrder(queries) {
   const groups = new Map();
   for (const q of queries) { const f = fieldOf(q); if (!groups.has(f)) groups.set(f, []); groups.get(f).push(q); }
